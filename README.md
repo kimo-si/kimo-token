@@ -1,10 +1,10 @@
 <p align="center">
-  <img alt="TokenMe Hero Banner" src="assets/tokenme-hero-dark.svg" width="100%">
+  <img alt="kimo-token Hero Banner" src="assets/kimo-token-hero-dark.svg" width="100%">
 </p>
 
 <p align="center">
-  <a href="https://github.com/Bencibr/tokenme"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
-  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.75%2B-orange.svg" alt="Rust Version"></a>
+  <a href="https://github.com/kimo-si/kimo-token"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.97%2B-orange.svg" alt="Rust Version"></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-green.svg" alt="Platform Support">
   <img src="https://img.shields.io/badge/index-local--only-success.svg" alt="Local Index">
 </p>
@@ -17,9 +17,9 @@
   <a href="README_EN.md">English</a> | <b>简体中文</b>
 </p>
 
-## TokenMe是什么？
+## kimo-token是什么？
 
-AI 编程工具的 token 用量、费用与订阅额度——菜单栏一屏看完。TokenMe 只读各家工具落盘的日志与数据库，在本机汇成一份索引：不碰代码内容、无遥测；多机经 ssh 汇总成同一份账，配额走各家自己的接口只读探测，七家每日签到一键代领。macOS 与 Windows 原生安装包，Linux 一等采集端，外加 CLI。
+AI 编程工具的 token 用量、费用与订阅额度——菜单栏一屏看完。kimo-token 只读各家工具落盘的日志与数据库，在本机汇成一份索引：不碰代码内容、无遥测；多机经 ssh 汇总成同一份账，配额走各家自己的接口只读探测，七家每日签到一键代领。macOS 与 Windows 原生安装包，Linux 一等采集端，外加 CLI。
 
 ## v0.2.0 亮点
 
@@ -31,10 +31,10 @@ AI 编程工具的 token 用量、费用与订阅额度——菜单栏一屏看�
 ## 运行截图
 
 <p align="center">
-  <img alt="TokenMe 面板 — 概览页，浅色" src="docs/screenshots/panel-zh-overview.png" width="24%">
-  <img alt="TokenMe 面板 — 工具页，浅色" src="docs/screenshots/panel-zh-tools.png" width="24%">
-  <img alt="TokenMe 面板 — 概览页，深色" src="docs/screenshots/panel-zh-overview-dark.png" width="24%">
-  <img alt="TokenMe 面板 — 工具页，深色" src="docs/screenshots/panel-zh-tools-dark.png" width="24%">
+  <img alt="kimo-token 面板 — 概览页，浅色" src="docs/screenshots/panel-zh-overview.png" width="24%">
+  <img alt="kimo-token 面板 — 工具页，浅色" src="docs/screenshots/panel-zh-tools.png" width="24%">
+  <img alt="kimo-token 面板 — 概览页，深色" src="docs/screenshots/panel-zh-overview-dark.png" width="24%">
+  <img alt="kimo-token 面板 — 工具页，深色" src="docs/screenshots/panel-zh-tools-dark.png" width="24%">
 </p>
 
 ## 核心功能
@@ -55,34 +55,25 @@ AI 编程工具的 token 用量、费用与订阅额度——菜单栏一屏看�
 
 ### macOS
 
-**Homebrew（推荐）**——tap 一次，之后用短名：
+本仓库由 [kimo-si](https://github.com/kimo-si) 维护。首次发布安装包前，请[从源码构建](#从源码构建)。Homebrew 分发尚未配置；维护者设置 `HOMEBREW_TAP_REPOSITORY` 和 `TAP_DEPLOY_KEY` 后可启用可选发布任务。
+
+**手动装 DMG**：到 [Releases](https://github.com/kimo-si/kimo-token/releases/latest) 下载，拖入 Applications。安装包是 ad-hoc 签名（没有开发者证书），Gatekeeper 可能拦一下——右键打开即可，或清掉隔离标记后正常启动：
 
 ```bash
-brew tap Bencibr/tokenme https://github.com/Bencibr/homebrew-tokenme
-brew trust bencibr/tokenme        # 一次即可——brew 6 对第三方 cask 有信任确认
-brew install --cask tokenme       # 菜单栏面板
-brew install tokenme-cli          # CLI
-```
-
-tap 随每次发布自动更新，`brew upgrade` 即可升级；cask 安装不带隔离标记，Gatekeeper 不会拦。
-
-**手动装 DMG**：到 [Releases](https://github.com/Bencibr/tokenme/releases/latest) 下载，拖入 Applications。安装包是 ad-hoc 签名（没有开发者证书），Gatekeeper 可能拦一下——右键打开即可，或清掉隔离标记后正常启动：
-
-```bash
-sudo xattr -rd com.apple.quarantine /Applications/TokenMe.app
+sudo xattr -rd com.apple.quarantine /Applications/kimo-token.app
 ```
 
 ### Windows
 
-到 [Releases](https://github.com/Bencibr/tokenme/releases/latest) 下载安装程序。安装器支持"所有用户"模式：共享电脑上请选择**所有用户**，升级时也保持同一模式——这样会原地替换机器级安装，并对所有 Windows 账户生效。安装包同时包含 `tokenme` 命令行工具，并自动将其 `bin` 目录加入用户 PATH（只为我）或系统 PATH（所有用户）。安装后重新打开终端，即可运行 `tokenme --help`、`tokenme daily` 和 `tokenme quota`。升级不会重复添加 PATH 项，卸载时会移除该安装目录的 PATH 项。
+到 [Releases](https://github.com/kimo-si/kimo-token/releases/latest) 下载安装程序。安装器支持"所有用户"模式：共享电脑上请选择**所有用户**，升级时也保持同一模式——这样会原地替换机器级安装，并对所有 Windows 账户生效。安装包同时包含 `kimo-token` 命令行工具，并自动将其 `bin` 目录加入用户 PATH（只为我）或系统 PATH（所有用户）。安装后重新打开终端，即可运行 `kimo-token --help`、`kimo-token daily` 和 `kimo-token quota`。升级不会重复添加 PATH 项，卸载时会移除该安装目录的 PATH 项。
 
 ### Linux
 
-没有菜单栏面板，但 Linux 是一等采集端：完全静态的二进制（musl，`x86_64` / `aarch64`，不需要 glibc 对齐，机器上也不用装 Rust 或 Python）。到 [Releases](https://github.com/Bencibr/tokenme/releases/latest) 下载压缩包（内附 `install-linux.sh`）：
+没有菜单栏面板，但 Linux 是一等采集端：完全静态的二进制（musl，`x86_64` / `aarch64`，不需要 glibc 对齐，机器上也不用装 Rust 或 Python）。到 [Releases](https://github.com/kimo-si/kimo-token/releases/latest) 下载压缩包（内附 `install-linux.sh`）：
 
 ```bash
-tar xzf tokenme-cli-*-linux-musl.tar.gz
-cd tokenme-cli-*-linux-musl
+tar xzf kimo-token-cli-*-linux-musl.tar.gz
+cd kimo-token-cli-*-linux-musl
 ./install-linux.sh --every 15 --push you@display-host
 ```
 
@@ -91,18 +82,18 @@ cd tokenme-cli-*-linux-musl
 ### 从源码构建
 
 ```bash
-git clone https://github.com/Bencibr/tokenme.git
-cd tokenme
-cargo install --path crates/usage-cli --bin tokenme   # CLI
+git clone https://github.com/kimo-si/kimo-token.git kimo-token
+cd kimo-token
+cargo install --path crates/usage-cli --bin kimo-token   # CLI
 ./scripts/build-macos.sh                              # macOS 面板
 ```
 
 装好先跑一次探测，再看最近一周的账：
 
 ```bash
-tokenme detect          # 自动探测本机装了哪些工具、日志在哪
-tokenme daily --days 7  # 最近一周的每日消耗与账单
-tokenme quota           # 各家订阅的实时额度与重置倒计时
+kimo-token detect          # 自动探测本机装了哪些工具、日志在哪
+kimo-token daily --days 7  # 最近一周的每日消耗与账单
+kimo-token quota           # 各家订阅的实时额度与重置倒计时
 ```
 
 ## 命令行
@@ -110,7 +101,7 @@ tokenme quota           # 各家订阅的实时额度与重置倒计时
 不开面板时，CLI 读的是同一份索引：
 
 ```text
-$ tokenme daily --days 3
+$ kimo-token daily --days 3
 
 ┌────────────┬──────────┬──────────┬────────┬────────────┬────────┬────────┬─────────┬────────┐
 │ Day        │ sessions │ requests │  input │ cache read │ output │  total │    cost │ cached │
@@ -125,12 +116,12 @@ $ tokenme daily --days 3
 
 | 命令 | 说明 |
 | :--- | :--- |
-| `tokenme daily --days 30` | 按天汇总吞吐、缓存率与费用 |
-| `tokenme report --window week --group model` | 单窗口多维拆分与环比 |
-| `tokenme quota` | 实时配额与重置倒计时 |
-| `tokenme budget set zcode --monthly 50` | 为无限额工具设定成本上限 |
-| `tokenme export` / `tokenme import` | 把本机一段窗口导出给另一台机器合并——纯文件、幂等、无账号 |
-| `tokenme pricing explain <model>` | 审计定价来源 |
+| `kimo-token daily --days 30` | 按天汇总吞吐、缓存率与费用 |
+| `kimo-token report --window week --group model` | 单窗口多维拆分与环比 |
+| `kimo-token quota` | 实时配额与重置倒计时 |
+| `kimo-token budget set zcode --monthly 50` | 为无限额工具设定成本上限 |
+| `kimo-token export` / `kimo-token import` | 把本机一段窗口导出给另一台机器合并——纯文件、幂等、无账号 |
+| `kimo-token pricing explain <model>` | 审计定价来源 |
 
 ## 支持的工具与实时配额
 
@@ -175,11 +166,11 @@ $ tokenme daily --days 3
 
 > 仅配额的来源：**Copilot**（高级请求额度，官方后端）只探测配额、不索引用量；**Gemini CLI** 的探测刻意关闭——实测其落盘 OAuth 令牌已过期，要续期就得用 Gemini CLI 自带包里的 client id/secret 去提交表单，而磁盘上也找不到该接口要的 project id（`crates/usage-quota/src/providers/gemini.rs`）。
 
-> **AgnesCode 令牌注入**：其登录令牌只存在于应用内存，无法静默读取。登录 agnescode.agnes-ai.cn 后从请求头取 `access_token`，写入 tokenme 系统配置目录下的 `agnes.token`（macOS 为 `~/Library/Application Support/tokenme/agnes.token`，Linux 为 `~/.config/tokenme/agnes.token`，Windows 为 `%APPDATA%\tokenme\agnes.token`），或设置 `AGNES_TOKEN` 即可启用。
+> **AgnesCode 令牌注入**：其登录令牌只存在于应用内存，无法静默读取。登录 agnescode.agnes-ai.cn 后从请求头取 `access_token`，写入 kimo-token 系统配置目录下的 `agnes.token`（macOS 为 `~/Library/Application Support/dev.kimo-token.bar/agnes.token`，Linux 为 `~/.config/kimo-token/agnes.token`，Windows 为 `%APPDATA%\kimo-token\agnes.token`），或设置 `AGNES_TOKEN` 即可启用。
 
 ## TTFT 与 TPS 测量
 
-TokenMe 可以从本地客户端活动中被动测量 **TTFT**（首 token 延迟）和 **TPS**（每秒生成 token 数）。这些是客户端实际观测值，不是厂商基准测试。启用采集后才开始记录，不会补录此前的活动。
+kimo-token 可以从本地客户端活动中被动测量 **TTFT**（首 token 延迟）和 **TPS**（每秒生成 token 数）。这些是客户端实际观测值，不是厂商基准测试。启用采集后才开始记录，不会补录此前的活动。
 
 | 宿主 | 被动测量 | 用户主动测试 |
 | :--- | :--- | :--- |
@@ -192,9 +183,9 @@ DSH 按会话汇总：TTFT 取请求均值，TPS 按输出 token 除以解码耗
 
 ## 设备同步（主从互备）
 
-多台电脑上都装了 TokenMe 时，可以让一台做**主端**、其余做**从端**：从端的用量自动汇入主端，主端的数据也会下发到从端，任何一台机器上都能看到全家桶的合并视图。
+多台电脑上都装了 kimo-token 时，可以让一台做**主端**、其余做**从端**：从端的用量自动汇入主端，主端的数据也会下发到从端，任何一台机器上都能看到全家桶的合并视图。
 
-- **前提**：两台机器在**同一局域网**；主端开机 TokenMe 在运行（它就是你的同步服务器）。
+- **前提**：两台机器在**同一局域网**；主端开机 kimo-token 在运行（它就是你的同步服务器）。
 - **配对**：主端面板 → 设备同步 → 生成配对邀请，从端扫码/粘贴即可。默认逐台确认，也可开免认证接入。
 - **端口**：主端监听 47821 端口，首次启动如弹防火墙授权请允许。
 - **容量**：一台主端最多带 **8 台从端**。
@@ -203,7 +194,7 @@ DSH 按会话汇总：TTFT 取请求均值，TPS 按输出 token 除以解码耗
 
 ## 数据与隐私
 
-只索引计数，不碰内容——你的代码和 Prompt 不会被存储，入库的只有每次请求的 token 计数、模型名与项目路径。扫描全程只读，无遥测、无第三方代理。索引库位于系统数据目录（macOS 为 `~/Library/Application Support/tokenme/`）；各工具日志路径见[用户指南](docs/USER_GUIDE.md)。
+只索引计数，不碰内容——你的代码和 Prompt 不会被存储，入库的只有每次请求的 token 计数、模型名与项目路径。扫描全程只读，无遥测、无第三方代理。索引库位于系统数据目录（macOS 为 `~/Library/Application Support/dev.kimo-token.bar/`）；各工具日志路径见[用户指南](docs/USER_GUIDE.md)。
 
 多机汇总时数据也只走你自己的通道——ssh/scp，或面板「服务器」入口的一键部署——无账号、无云端；细节见[用户指南](docs/USER_GUIDE.md) §4。
 
@@ -211,9 +202,8 @@ DSH 按会话汇总：TTFT 取请求均值，TPS 按输出 token 除以解码耗
 
 | | |
 | :--- | :--- |
-| 问题反馈 | [GitHub Issues](https://github.com/Bencibr/tokenme/issues) |
-| 微信交流群 | <img src="docs/wechat-group.png" width="180" alt="TokenMe 微信交流群"> |
-| 邮箱 | 面板「设置 → 联系我们」直达（地址在 `apps/tokenme-bar/src/lib/about.ts`） |
+| 问题反馈 | [GitHub Issues](https://github.com/kimo-si/kimo-token/issues) |
+| 微信交流群 | <img src="docs/wechat-group.png" width="180" alt="kimo-token 微信交流群"> |
 
 ## 许可证
 

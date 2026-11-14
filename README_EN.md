@@ -1,10 +1,10 @@
 <p align="center">
-  <img alt="TokenMe Hero Banner" src="assets/tokenme-hero-dark.svg" width="100%">
+  <img alt="kimo-token Hero Banner" src="assets/kimo-token-hero-dark.svg" width="100%">
 </p>
 
 <p align="center">
-  <a href="https://github.com/Bencibr/tokenme"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
-  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.75%2B-orange.svg" alt="Rust Version"></a>
+  <a href="https://github.com/kimo-si/kimo-token"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.97%2B-orange.svg" alt="Rust Version"></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-green.svg" alt="Platform Support">
   <img src="https://img.shields.io/badge/index-local--only-success.svg" alt="Local Index">
 </p>
@@ -17,9 +17,9 @@
   <b>English</b> | <a href="README.md">简体中文</a>
 </p>
 
-## What is TokenMe?
+## What is kimo-token?
 
-Token usage, spend and subscription quota across the AI coding tools you already run — one menu bar panel. TokenMe reads the logs and databases your tools already write to disk and folds them into one local index: no code content, no telemetry; multi-machine rolls in over ssh, quota probes are read-only against each vendor's own API, and seven tools get one-click daily check-in. Native installers for macOS and Windows, a fully static Linux collector, plus a CLI.
+Token usage, spend and subscription quota across the AI coding tools you already run — one menu bar panel. kimo-token reads the logs and databases your tools already write to disk and folds them into one local index: no code content, no telemetry; multi-machine rolls in over ssh, quota probes are read-only against each vendor's own API, and seven tools get one-click daily check-in. Native installers for macOS and Windows, a fully static Linux collector, plus a CLI.
 
 ## v0.2.0 highlights
 
@@ -31,10 +31,10 @@ Token usage, spend and subscription quota across the AI coding tools you already
 ## Screenshots
 
 <p align="center">
-  <img alt="TokenMe panel — Overview tab, light" src="docs/screenshots/panel-en-overview.png" width="24%">
-  <img alt="TokenMe panel — Tools tab, light" src="docs/screenshots/panel-en-tools.png" width="24%">
-  <img alt="TokenMe panel — Overview tab, dark" src="docs/screenshots/panel-en-overview-dark.png" width="24%">
-  <img alt="TokenMe panel — Tools tab, dark" src="docs/screenshots/panel-en-tools-dark.png" width="24%">
+  <img alt="kimo-token panel — Overview tab, light" src="docs/screenshots/panel-en-overview.png" width="24%">
+  <img alt="kimo-token panel — Tools tab, light" src="docs/screenshots/panel-en-tools.png" width="24%">
+  <img alt="kimo-token panel — Overview tab, dark" src="docs/screenshots/panel-en-overview-dark.png" width="24%">
+  <img alt="kimo-token panel — Tools tab, dark" src="docs/screenshots/panel-en-tools-dark.png" width="24%">
 </p>
 
 ## Core features
@@ -55,54 +55,45 @@ Pick your platform: [macOS](#macos) · [Windows](#windows) · [Linux](#linux) ·
 
 ### macOS
 
-**Homebrew (recommended)** — tap once, then short names:
+This repository is maintained by [kimo-si](https://github.com/kimo-si). Until the first release is published, [build from source](#build-from-source). Homebrew distribution is not configured; maintainers can enable the optional release job by setting `HOMEBREW_TAP_REPOSITORY` and `TAP_DEPLOY_KEY`.
+
+**Manual DMG**: grab it from [Releases](https://github.com/kimo-si/kimo-token/releases/latest) and drag to Applications. The bundle is ad-hoc signed (no developer certificate), so Gatekeeper may step in — right-click → Open works, or clear the quarantine flag:
 
 ```bash
-brew tap Bencibr/tokenme https://github.com/Bencibr/homebrew-tokenme
-brew trust bencibr/tokenme        # once — brew 6 asks before trusting third-party casks
-brew install --cask tokenme       # the menu-bar panel
-brew install tokenme-cli          # the CLI
-```
-
-The tap is bumped automatically on every release, so `brew upgrade` keeps you current, and cask installs carry no quarantine flag — Gatekeeper never steps in.
-
-**Manual DMG**: grab it from [Releases](https://github.com/Bencibr/tokenme/releases/latest) and drag to Applications. The bundle is ad-hoc signed (no developer certificate), so Gatekeeper may step in — right-click → Open works, or clear the quarantine flag:
-
-```bash
-sudo xattr -rd com.apple.quarantine /Applications/TokenMe.app
+sudo xattr -rd com.apple.quarantine /Applications/kimo-token.app
 ```
 
 ### Windows
 
-Grab the setup from [Releases](https://github.com/Bencibr/tokenme/releases/latest). The installer supports an all-users install: on shared machines choose **All users**, and use the same mode for upgrades — the machine-wide installation is then replaced in place for every Windows account. The setup also installs the `tokenme` CLI and adds its `bin` directory to the user PATH (Only me) or system PATH (All users). Open a new terminal after installation to use `tokenme --help`, `tokenme daily`, and `tokenme quota`. Upgrades do not duplicate the PATH entry; uninstall removes only this installation's entry.
+Grab the setup from [Releases](https://github.com/kimo-si/kimo-token/releases/latest). The installer supports an all-users install: on shared machines choose **All users**, and use the same mode for upgrades — the machine-wide installation is then replaced in place for every Windows account. The setup also installs the `kimo-token` CLI and adds its `bin` directory to the user PATH (Only me) or system PATH (All users). Open a new terminal after installation to use `kimo-token --help`, `kimo-token daily`, and `kimo-token quota`. Upgrades do not duplicate the PATH entry; uninstall removes only this installation's entry.
 
 ### Linux
 
-No menu-bar panel here — but Linux is a first-class collector: a fully static binary (musl, `x86_64` / `aarch64`, no glibc to align, no Rust or Python on the box). Grab the tarball from [Releases](https://github.com/Bencibr/tokenme/releases/latest) (`install-linux.sh` rides inside):
+No menu-bar panel here — but Linux is a first-class collector: a fully static binary (musl, `x86_64` / `aarch64`, no glibc to align, no Rust or Python on the box). Grab the tarball from [Releases](https://github.com/kimo-si/kimo-token/releases/latest) (`install-linux.sh` rides inside):
 
 ```bash
-tar xzf tokenme-cli-*-linux-musl.tar.gz
-cd tokenme-cli-*-linux-musl
+tar xzf kimo-token-cli-*-linux-musl.tar.gz
+cd kimo-token-cli-*-linux-musl
 ./install-linux.sh --every 15 --push you@display-host
 ```
 
-One command puts `tokenme` in `~/.local/bin` and wires up scheduled reporting. The panel's **Servers** entry can also do the ssh half for you — probes the host, pins the fingerprint, deploys the collector, pulls and merges on schedule. Details in the [user guide](docs/USER_GUIDE.md) §4.
+One command puts `kimo-token` in `~/.local/bin` and wires up scheduled reporting. The panel's **Servers** entry can also do the ssh half for you — probes the host, pins the fingerprint, deploys the collector, pulls and merges on schedule. Details in the [user guide](docs/USER_GUIDE.md) §4.
 
 ### Build from source
 
 ```bash
-git clone https://github.com/Bencibr/tokenme.git
-cd tokenme
-cargo install --path crates/usage-cli --bin tokenme   # the CLI
+git clone https://github.com/kimo-si/kimo-token.git kimo-token
+cd kimo-token
+cargo install --path crates/usage-cli --bin kimo-token   # the CLI
 ./scripts/build-macos.sh                              # the macOS panel
 ```
 
 Once it's in, run a detection pass and look at the last week:
 
 ```bash
-tokenme detect          # find every installed tool and where its logs live
-tokenme daily --days 7  # the last week's daily usage and spend
-tokenme quota           # live quotas and reset countdowns
+kimo-token detect          # find every installed tool and where its logs live
+kimo-token daily --days 7  # the last week's daily usage and spend
+kimo-token quota           # live quotas and reset countdowns
 ```
 
 ## The CLI
@@ -110,7 +101,7 @@ tokenme quota           # live quotas and reset countdowns
 When the panel stays closed, the CLI reads the same index:
 
 ```text
-$ tokenme daily --days 3
+$ kimo-token daily --days 3
 
 ┌────────────┬──────────┬──────────┬────────┬────────────┬────────┬────────┬─────────┬────────┐
 │ Day        │ sessions │ requests │  input │ cache read │ output │  total │    cost │ cached │
@@ -125,12 +116,12 @@ $ tokenme daily --days 3
 
 | Command | What it does |
 | :--- | :--- |
-| `tokenme daily --days 30` | Day-by-day throughput, cache rate, and cost |
-| `tokenme report --window week --group model` | One window, broken down every which way |
-| `tokenme quota` | Live quotas with reset countdowns |
-| `tokenme budget set zcode --monthly 50` | Put a monthly cap on a tool that has none |
-| `tokenme export` / `tokenme import` | Ship a window of the index to another machine and merge it back — file-based, idempotent, no accounts |
-| `tokenme pricing explain <model>` | Audit where a price comes from |
+| `kimo-token daily --days 30` | Day-by-day throughput, cache rate, and cost |
+| `kimo-token report --window week --group model` | One window, broken down every which way |
+| `kimo-token quota` | Live quotas with reset countdowns |
+| `kimo-token budget set zcode --monthly 50` | Put a monthly cap on a tool that has none |
+| `kimo-token export` / `kimo-token import` | Ship a window of the index to another machine and merge it back — file-based, idempotent, no accounts |
+| `kimo-token pricing explain <model>` | Audit where a price comes from |
 
 ## Supported tools & live quota
 
@@ -176,11 +167,11 @@ Every tool below ships as a built-in adapter — 30 of them, indexed straight fr
 
 > Quota-only sources: **Copilot** (premium-request allowance, official backend) probes quota only and indexes no usage; probing for **Gemini CLI** is deliberately off — its on-disk OAuth token was measured expired, freshening it would mean posting with the client id and secret embedded in the Gemini CLI's own bundle, and no project id for that call exists on disk (`crates/usage-quota/src/providers/gemini.rs`).
 
-> **AgnesCode token**: its login token lives only in the app's memory and can't be read silently. Sign in at agnescode.agnes-ai.cn, copy the `access_token` request header, and write it to `agnes.token` in tokenme's OS config directory (`~/Library/Application Support/tokenme/agnes.token` on macOS, `~/.config/tokenme/agnes.token` on Linux, `%APPDATA%\tokenme\agnes.token` on Windows) — or set `AGNES_TOKEN`.
+> **AgnesCode token**: its login token lives only in the app's memory and can't be read silently. Sign in at agnescode.agnes-ai.cn, copy the `access_token` request header, and write it to `agnes.token` in kimo-token's OS config directory (`~/Library/Application Support/dev.kimo-token.bar/agnes.token` on macOS, `~/.config/kimo-token/agnes.token` on Linux, `%APPDATA%\kimo-token\agnes.token` on Windows) — or set `AGNES_TOKEN`.
 
 ## TTFT & TPS measurements
 
-TokenMe can passively measure **TTFT** (time to first token) and **TPS** (generated tokens per second) from local client activity. These are observed client-side timings, not provider benchmarks. Collection begins when enabled; earlier activity is not backfilled.
+kimo-token can passively measure **TTFT** (time to first token) and **TPS** (generated tokens per second) from local client activity. These are observed client-side timings, not provider benchmarks. Collection begins when enabled; earlier activity is not backfilled.
 
 | Host | Passive measurements | User-triggered test |
 | :--- | :--- | :--- |
@@ -193,7 +184,7 @@ DSH follows its session stats: TTFT averaged per request, TPS as output tokens o
 
 ## Data & privacy
 
-Only counts get indexed, never content — your code and prompts are not stored. What lands in the index is each request's token counts, model name, and project path. Scanning is read-only throughout; no telemetry, no third-party proxies. The index lives in your system data directory (`~/Library/Application Support/tokenme/` on macOS), and each tool's log paths are listed in the [user guide](docs/USER_GUIDE.md).
+Only counts get indexed, never content — your code and prompts are not stored. What lands in the index is each request's token counts, model name, and project path. Scanning is read-only throughout; no telemetry, no third-party proxies. The index lives in your system data directory (`~/Library/Application Support/dev.kimo-token.bar/` on macOS), and each tool's log paths are listed in the [user guide](docs/USER_GUIDE.md).
 
 Multi-machine roll-ups move data over your own channels too — ssh/scp, or the one-click **Servers** entry in the panel footer — no accounts, no cloud; details in the [user guide](docs/USER_GUIDE.md) §4.
 
@@ -201,9 +192,8 @@ Multi-machine roll-ups move data over your own channels too — ssh/scp, or the 
 
 | | |
 | :--- | :--- |
-| Bug reports | [GitHub Issues](https://github.com/Bencibr/tokenme/issues) |
-| WeChat user group | <img src="docs/wechat-group.png" width="180" alt="TokenMe WeChat group"> |
-| Email | Panel → Settings → Contact us (address in `apps/tokenme-bar/src/lib/about.ts`) |
+| Bug reports | [GitHub Issues](https://github.com/kimo-si/kimo-token/issues) |
+| WeChat user group | <img src="docs/wechat-group.png" width="180" alt="kimo-token WeChat group"> |
 
 ## License
 
