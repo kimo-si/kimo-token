@@ -30,11 +30,13 @@ AI 编程工具的 token 用量、费用与订阅额度——菜单栏一屏看�
 
 ## 运行截图
 
+当前界面截图（2026-11-14），使用应用内置演示数据。
+
 <p align="center">
   <img alt="kimo-token 面板 — 概览页，浅色" src="docs/screenshots/panel-zh-overview.png" width="24%">
-  <img alt="kimo-token 面板 — 工具页，浅色" src="docs/screenshots/panel-zh-tools.png" width="24%">
+  <img alt="kimo-token 面板 — 分析页，浅色" src="docs/screenshots/panel-zh-tools.png" width="24%">
   <img alt="kimo-token 面板 — 概览页，深色" src="docs/screenshots/panel-zh-overview-dark.png" width="24%">
-  <img alt="kimo-token 面板 — 工具页，深色" src="docs/screenshots/panel-zh-tools-dark.png" width="24%">
+  <img alt="kimo-token 面板 — 分析页，深色" src="docs/screenshots/panel-zh-tools-dark.png" width="24%">
 </p>
 
 ## 核心功能

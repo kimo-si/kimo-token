@@ -30,11 +30,13 @@ Token usage, spend and subscription quota across the AI coding tools you already
 
 ## Screenshots
 
+Current interface captured on 2026-11-14 using built-in demo data.
+
 <p align="center">
   <img alt="kimo-token panel — Overview tab, light" src="docs/screenshots/panel-en-overview.png" width="24%">
-  <img alt="kimo-token panel — Tools tab, light" src="docs/screenshots/panel-en-tools.png" width="24%">
+  <img alt="kimo-token panel — Analysis tab, light" src="docs/screenshots/panel-en-tools.png" width="24%">
   <img alt="kimo-token panel — Overview tab, dark" src="docs/screenshots/panel-en-overview-dark.png" width="24%">
-  <img alt="kimo-token panel — Tools tab, dark" src="docs/screenshots/panel-en-tools-dark.png" width="24%">
+  <img alt="kimo-token panel — Analysis tab, dark" src="docs/screenshots/panel-en-tools-dark.png" width="24%">
 </p>
 
 ## Core features
