@@ -3,6 +3,8 @@ import { listen } from "@tauri-apps/api/event";
 import { FIXTURE, makeFixtureReport } from "../fixture";
 import { serverMock } from "./serverFixture";
 import { t } from "./i18n";
+import { previewAgentOptions } from "./format";
+import type { AgentOption, AgentSelection } from "../types";
 import { DEFAULT_PET_PREFERENCES } from "./petCompanion";
 import type { PetNotice, PetPreferences, PetResponse } from "./petCompanion";
 import { PANEL_THEME_KEYS } from "../types";
@@ -464,8 +466,23 @@ export const bridge: Bridge = {
   },
 
   async probeTools(): Promise<ProbeTool[]> {
-    if (!inTauri) return browserProbes.map((p) => ({ ...p, polling: browserSettings.quota_polling && !browserSettings.quota_probes_off.includes(p.id) }));
+    if (!inTauri) return browserProbes.filter((p) => browserSettings.enabled_agents.includes(p.id))
+      .map((p) => ({ ...p, polling: browserSettings.quota_polling && !browserSettings.quota_probes_off.includes(p.id) }));
     return invoke<ProbeTool[]>("probe_tools");
+  },
+
+  // 桌面直接枚举已注册的适配器，预览使用同样的工具名称。
+  async availableAgents(): Promise<AgentOption[]> {
+    return inTauri ? invoke<AgentOption[]>("available_agents") : previewAgentOptions();
+  },
+
+  // 保存单个工具的选择，返回已保存的完整列表。
+  async setAgentEnabled(selection: AgentSelection): Promise<string[]> {
+    if (inTauri) return invoke<string[]>("set_agent_enabled", { selection });
+    const next = browserSettings.enabled_agents.filter((id) => id !== selection.id);
+    if (selection.enabled) next.push(selection.id);
+    browserSettings.enabled_agents = next;
+    return next;
   },
 
   async setNotifyTiers(tiers: NotifyTierKey): Promise<void> {
@@ -738,6 +755,7 @@ function pinnedNotifyState(): NotifyState {
 
 /** 预览皮肤从本地存储恢复，其余模拟设置保留在会话内。 */
 const browserSettings: PanelSettings = {
+  enabled_agents: ["codex"],
   tray_mode: "tray_tokens",
   autostart: false,
   refresh_secs: 30,

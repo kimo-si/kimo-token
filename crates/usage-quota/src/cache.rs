@@ -157,16 +157,7 @@ fn views(tool: &str, captured_at_ms: i64, entries: &[Entry]) -> Vec<QuotaView> {
         .collect()
 }
 
-/// Cached-then-live probe: disk if fresh, otherwise fetch and remember.
-///
-/// A *negative* answer is cached too. Without that, a tool that legitimately
-/// has no quota surface (not signed in, not subscribed, proxied credentials)
-/// would pay its full connect+read timeout on every single refresh, which in
-/// aggregate is what made `quota` take half a minute.
-pub fn probe(cache: Option<&Cache>, source: &dyn QuotaProbe) -> Vec<QuotaView> {
-    probe_with_mode(cache, source, ProbeMode::Cached)
-}
-
+/// Whether a probe can use a fresh cache entry or must ask the vendor.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProbeMode {
     Cached,
@@ -174,6 +165,7 @@ pub(crate) enum ProbeMode {
 }
 
 // 定时或手动刷新可跳过有效期判断，但保留旧缓存供失败时使用。
+// 普通查询也缓存空结果，避免反复查询未登录或没有额度的工具。
 pub(crate) fn probe_with_mode(
     cache: Option<&Cache>,
     source: &dyn QuotaProbe,
@@ -228,7 +220,7 @@ fn empty_answer(cache: Option<&Cache>, source: &dyn QuotaProbe, mode: ProbeMode)
 
 impl ProbeMode {
     // 强制查询无结果时保留上次答案；普通轮询继续遵守原有宽限期。
-    fn fallback(self, cache: Option<&Cache>, tool: &str) -> Option<Vec<QuotaView>> {
+    pub(crate) fn fallback(self, cache: Option<&Cache>, tool: &str) -> Option<Vec<QuotaView>> {
         let cache = cache?;
         match self {
             Self::Cached => cache.within(tool, GRACE),
@@ -296,7 +288,7 @@ pub fn cache_dir(path: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod cache_clear_tests {
-    use super::{probe, probe_with_mode, Cache, ProbeMode, QuotaProbe, QuotaSample};
+    use super::{probe_with_mode, Cache, ProbeMode, QuotaProbe, QuotaSample};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct FailingProbe(AtomicUsize);
@@ -322,7 +314,7 @@ mod cache_clear_tests {
             used_percent: 37.0, window_minutes: 300, resets_at_ms: 0, label: None, id: None,
         }]);
 
-        let saved = probe(Some(&cache), &vendor);
+        let saved = probe_with_mode(Some(&cache), &vendor, ProbeMode::Cached);
         assert_eq!(vendor.0.load(Ordering::Relaxed), 0);
         assert_eq!(saved.len(), 1);
         let after = probe_with_mode(Some(&cache), &vendor, ProbeMode::Force);

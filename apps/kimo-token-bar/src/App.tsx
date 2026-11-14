@@ -125,6 +125,7 @@ function PanelApp() {
   // only so Escape can dismiss it before the sheet and the panel itself.
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const [showMoney, setShowMoney] = useState(false);
+  const [enabledAgents, setEnabledAgents] = useState<string[]>(["codex"]);
   const [resetCredits, setResetCredits] = useState<ResetCreditsState>({ status: "idle", cards: null });
   useEffect(() => {
     let active = true;
@@ -255,6 +256,7 @@ function PanelApp() {
       applyTheme(s.theme);
       applyMoney(s.show_money);
       setShowMoney(s.show_money);
+      setEnabledAgents(s.enabled_agents);
       setQuotaPrefs(quotaPreferences(s));
       // The idle cadence is what the "updates stopped" line measures against.
       setRefreshSecs(s.refresh_secs);
@@ -717,14 +719,16 @@ function PanelApp() {
                   polling={quotaPrefs.quota_polling} displayMode={quotaPrefs.quota_display_mode}
                   showCycleTokens={quotaPrefs.show_cycle_tokens} usedTools={localUsedTools}
                   hideUnusedQuota={quotaPrefs.hide_unused_quota} hideUnusedEstimation={quotaPrefs.hide_unused_estimation} />
-                <ResetCreditsBoard state={resetCredits} now={now} onRefresh={() => void refreshResetCredits()} />
+                {enabledAgents.includes("codex") &&
+                  <ResetCreditsBoard state={resetCredits} now={now} onRefresh={() => void refreshResetCredits()} />}
               </>
             )}
             {page === "analysis" && (
               <AnalysisPage report={report} period={period} scope={scope} tools={tools} view={analysisView}
                 empty={isEmpty} loading={loading} now={now} onView={setAnalysisView} onPeriod={setPeriod} onRefresh={() => void refresh()} />
             )}
-            {page === "speed" && <SpeedPage snapshot={ttftSnapshot} now={now} scope={scope} />}
+            {page === "speed" &&
+              <SpeedPage snapshot={ttftSnapshot} now={now} scope={scope} codexEnabled={enabledAgents.includes("codex")} />}
           </div>
         </main>
 
@@ -751,6 +755,7 @@ function PanelApp() {
             onRefreshSecs={setRefreshSecs}
             onMoney={setShowMoney}
             onQuotaPolling={updateQuotaPolling}
+            onAgentsChange={setEnabledAgents}
             onTrayModeChange={changeTrayMode}
             displays={Object.fromEntries(report.sources.map((s) => [s.id, s.display]))}
           />

@@ -120,6 +120,11 @@ impl Shared {
         self.settings.lock().map(|s| s.clone()).unwrap_or_default()
     }
 
+    // 供独立采样器和手动工具操作读取实时开关。
+    pub fn agent_enabled(&self, id: &str) -> bool {
+        self.settings.lock().is_ok_and(|settings| settings.agent_enabled(id))
+    }
+
     /// The current scope, falling back to `All` on a poisoned lock: showing
     /// every machine is the report the user can least be surprised by.
     pub fn scope(&self) -> MachineScope {
@@ -266,6 +271,39 @@ impl Exit {
     }
 }
 
+struct AgentSources {
+    ids: Vec<&'static str>,
+    adapters: Vec<Box<dyn SourceAdapter>>,
+    detected: Vec<DetectedSource>,
+    _watcher: Option<Watcher>,
+}
+
+impl AgentSources {
+    // 只检测和监听当前启用的适配器，空列表也表示全部关闭。
+    fn load(ids: Vec<&'static str>, wakes: &Sender<PathBuf>) -> Self {
+        let adapters = usage_adapter_all::builtin_adapters().into_iter()
+            .filter(|adapter| ids.contains(&adapter.id())).collect::<Vec<_>>();
+        let detected: Vec<_> = adapters.iter().filter_map(|adapter| adapter.probe()).collect();
+        let roots: Vec<_> = detected.iter().flat_map(|source| source.roots.iter().cloned()).collect();
+        // 替换来源时销毁旧 watcher，停掉已关闭工具的文件监听。
+        let watcher = if roots.is_empty() { None } else { Watcher::spawn(&roots, wakes.clone()).ok() };
+        Self { ids, adapters, detected, _watcher: watcher }
+    }
+}
+
+// 将文件监听事件送到现有引擎频道，来源切换时继续复用这个线程。
+fn watcher_channel(tx: Sender<Msg>) -> Sender<PathBuf> {
+    let (wake_tx, wake_rx) = mpsc::channel();
+    std::thread::Builder::new().name("kimo-token-wake".into()).spawn(move || {
+        while let Ok(root) = wake_rx.recv() {
+            if tx.send(Msg::Wake(root)).is_err() {
+                break;
+            }
+        }
+    }).ok();
+    wake_tx
+}
+
 fn run<R: Runtime>(app: AppHandle<R>, rx: &Receiver<Msg>, tx: &Sender<Msg>) -> Exit {
     // Cold start is the one latency the user feels directly, so the boot path
     // is measured rather than guessed: this clock is what the "boot:" line
@@ -278,8 +316,9 @@ fn run<R: Runtime>(app: AppHandle<R>, rx: &Receiver<Msg>, tx: &Sender<Msg>) -> E
     // this report as restored, so the first frame is faster rather than younger.
     publish_restored(&app);
     let at_restore = boot.elapsed();
-    let adapters = usage_adapter_all::adapters_for(&[crate::PANEL_TOOL]);
-    let detected: Vec<DetectedSource> = adapters.iter().filter_map(|adapter| adapter.probe()).collect();
+    let wake_tx = watcher_channel(tx.clone());
+    // 启动时从已保存的列表初始化适配器和文件监听。
+    let mut agents = AgentSources::load(app.state::<Shared>().settings().active_agent_ids(), &wake_tx);
     let at_detect = boot.elapsed();
     let mut pricing = PricingMap::load(&PricingOptions {
         offline: false,
@@ -298,24 +337,6 @@ fn run<R: Runtime>(app: AppHandle<R>, rx: &Receiver<Msg>, tx: &Sender<Msg>) -> E
     );
     let at_index = boot.elapsed();
 
-    let roots: Vec<PathBuf> = detected.iter().flat_map(|d| d.roots.clone()).collect();
-    let (wake_tx, wake_rx) = mpsc::channel();
-    // The watcher only lives as long as this binding; dropping it stops events.
-    let _watcher: Option<Watcher> = Watcher::spawn(&roots, wake_tx).ok();
-    {
-        let tx = tx.clone();
-        std::thread::Builder::new()
-            .name("kimo-token-wake".into())
-            .spawn(move || {
-                while let Ok(root) = wake_rx.recv() {
-                    if tx.send(Msg::Wake(root)).is_err() {
-                        break;
-                    }
-                }
-            })
-            .ok();
-    }
-
     // The second frame: this run's own fold over the index, before the scan has
     // read a single source file. The snapshot above may already have covered it;
     // this is what replaces it, and on a fresh install (no snapshot, empty index)
@@ -324,8 +345,8 @@ fn run<R: Runtime>(app: AppHandle<R>, rx: &Receiver<Msg>, tx: &Sender<Msg>) -> E
         let events = index.has_events().unwrap_or(false);
         let at_count = boot.elapsed();
         if events {
-            let sources =
-                index.source_statuses(&detected).unwrap_or_else(|_| fallback_sources(&detected));
+            let sources = index.source_statuses(&agents.detected)
+                .unwrap_or_else(|_| fallback_sources(&agents.detected));
             let at_sources = boot.elapsed();
             let _ = publish(&app, index, &sources, &pricing, QuotaMode::Cached);
             let ms = |d: Duration| d.as_millis();
@@ -360,7 +381,7 @@ fn run<R: Runtime>(app: AppHandle<R>, rx: &Receiver<Msg>, tx: &Sender<Msg>) -> E
     let mut wake_roots: Vec<PathBuf> = Vec::new();
 
     let mut last_publish = Instant::now();
-    ingest(&app, &mut index, &adapters, &detected, &pricing, IngestReason::Initial, &mut last_publish,
+    ingest(&app, &mut index, &agents.adapters, &agents.detected, &pricing, IngestReason::Initial, &mut last_publish,
         &mut snapshot, &mut snapshot_at, &mut wake_roots);
     let mut last_pass = Instant::now();
     let mut last_pass_cost = Duration::from_secs(1);
@@ -397,7 +418,7 @@ fn run<R: Runtime>(app: AppHandle<R>, rx: &Receiver<Msg>, tx: &Sender<Msg>) -> E
                         // 文件变化可以等一等，但等待不能越过下一次定时刷新。
                         let wait = (gap - since).min(fallback.saturating_sub(last_cadence.elapsed()));
                         if wait_for_ingest_gap(&shared.scope_refresh_queued, wait) {
-                            fold_scope(&app, &mut index, &detected, &pricing);
+                            fold_scope(&app, &mut index, &agents.detected, &pricing);
                         }
                     }
                     if last_cadence.elapsed() >= fallback {
@@ -410,20 +431,27 @@ fn run<R: Runtime>(app: AppHandle<R>, rx: &Receiver<Msg>, tx: &Sender<Msg>) -> E
                 }
                 let pass_started = Instant::now();
                 last_pass = Instant::now();
-                ingest(&app, &mut index, &adapters, &detected, &pricing, reason, &mut last_publish,
+                let selected = app.state::<Shared>().settings().active_agent_ids();
+                if agents.ids != selected {
+                    // 来源切换后重新发现日志，旧监听和文件快照不能沿用。
+                    agents = AgentSources::load(selected, &wake_tx);
+                    snapshot.clear();
+                    wake_roots.clear();
+                }
+                ingest(&app, &mut index, &agents.adapters, &agents.detected, &pricing, reason, &mut last_publish,
                     &mut snapshot, &mut snapshot_at, &mut wake_roots);
                 last_pass_cost = pass_started.elapsed().min(MAX_PASS_COST);
             }
             Work::Resummarize => {
                 crate::logging::info("pricing refreshed — re-summarizing indexed events");
-                resummarize(&app, &mut index, &detected, &pricing);
+                resummarize(&app, &mut index, &agents.detected, &pricing);
                 // Wakes collected before the table landed are still pending:
                 // `ingest` clears `wake_roots`, this arm leaves them for the next
                 // pass, which then walks those tools' trees instead of restating
                 // a snapshot built from the old prices.
             }
             Work::Scope => {
-                fold_scope(&app, &mut index, &detected, &pricing);
+                fold_scope(&app, &mut index, &agents.detected, &pricing);
             }
             Work::Stopped => return Exit::Disconnected,
         }
@@ -884,18 +912,16 @@ fn resummarize<R: Runtime>(
 /// it was folded. The panel labels it as restored, and quota also remains at
 /// the last known sample.
 fn publish_restored<R: Runtime>(app: &AppHandle<R>) {
-    let scope = app.state::<Shared>().scope();
-    let Some(mut report) = snapshot::read(&scope) else {
+    let shared = app.state::<Shared>();
+    let settings = shared.settings();
+    let Some(mut report) = snapshot::read(&shared.scope(), &settings.active_agent_ids()) else {
         crate::logging::info("boot: nothing to restore — the panel waits for the index fold");
         return;
     };
     let published_at = report.generated_at_ms;
     report.from_previous_run = true;
     // 恢复时只合并本地额度快照，预算继续用已保存的报告。
-    let settings = app.state::<Shared>().settings();
-    let saved = report.quotas.iter().any(|row| row.origin != QuotaOrigin::Budget)
-        .then_some(report.quotas.as_slice());
-    let quotas = cached_quota(saved, &settings);
+    let quotas = cached_quota(&report.quotas, &settings);
     report.quotas.retain(|row| row.origin == QuotaOrigin::Budget);
     report.quotas.extend(quotas);
     report.quotas_pending = false;
@@ -921,8 +947,10 @@ fn publish<R: Runtime>(
     quota_mode: QuotaMode,
 ) -> bool {
     let shared = app.state::<Shared>();
+    let settings = shared.settings();
+    let agents = settings.active_agent_ids();
     // 根据刷新来源读取缓存或查询额度。
-    let quota = quota_for_report(&shared, quota_mode);
+    let quota = quota_for_report(&shared, &settings, quota_mode);
     let mut scope = shared.scope();
     let folded_at = usage_core::report::instant_after_polling(false, now_ms(), &quota.rows);
     // The fold runs at most twice: an Origin scope naming a machine the fresh
@@ -943,12 +971,13 @@ fn publish<R: Runtime>(
             // After the probes, not before them: a vendor CLI that answers late must
             // not leave the report stamped older than a window it is showing.
             now_ms: folded_at,
-            sources: sources.iter().filter(|source| source.id == crate::PANEL_TOOL).cloned().collect(),
+            sources: sources.iter().filter(|source| settings.agent_enabled(&source.id)).cloned().collect(),
             recent_session_limit: 12,
             // The rare second fold re-uses the pass's samples; the vec is a
             // dozen rows, noise next to the fold itself.
             polled_quota: quota.rows.clone(),
-            budgets: shared.settings().budgets.into_iter().filter(|(tool, _)| tool == crate::PANEL_TOOL).collect(),
+            budgets: settings.budgets.iter().filter(|(tool, _)| settings.agent_enabled(tool))
+                .map(|(tool, budget)| (tool.clone(), budget.clone())).collect(),
             scope: scope.clone(),
             exclude_origins: exclude_origins.clone(),
         };
@@ -959,7 +988,7 @@ fn publish<R: Runtime>(
         // detached set, or a departed origin would fill the slots.
         let plan = AggregatePlan::build(opts.now_ms, opts.recent_session_limit);
         let facts_started = Instant::now();
-        let mut facts = match index.report_facts_filtered(&plan, &scope, &exclude_origins, Some(crate::PANEL_TOOL)) {
+        let mut facts = match index.report_facts_for_tools(&plan, &scope, &exclude_origins, Some(&agents)) {
             Ok(facts) => facts,
             Err(e) => {
                 crate::logging::error(&format!(
@@ -976,9 +1005,7 @@ fn publish<R: Runtime>(
             );
         }
         // 文件变动可更新用量，额度样本仅在定时或手动刷新时纳入。
-        if !quota.include_log_samples {
-            facts.quotas.clear();
-        }
+        facts.quotas.retain(|sample| quota.queried_tools.contains(&sample.tool.as_str()));
         let folded = usage_core::report::summarize_facts(&facts, &opts);
         if let MachineScope::Origin { name } = &scope {
             // Correct only the scope this fold actually used: a pick that
@@ -1005,13 +1032,17 @@ fn publish<R: Runtime>(
             cycle_usage_started.elapsed().as_millis(),
         ));
     }
-    if let Ok(mut slot) = app.state::<Shared>().report.lock() {
+    // 查询额度或折叠期间可能保存了新选择，交给队列里的刷新发布最新范围。
+    if shared.settings().active_agent_ids() != agents {
+        return false;
+    }
+    if let Ok(mut slot) = shared.report.lock() {
         *slot = Some(report.clone());
     }
     // The next launch's first frame. Written here rather than on the boot paths so
     // that whatever the panel has been shown is also what gets remembered — a
     // snapshot of a report nobody saw would make "last known" mean two things.
-    snapshot::write(&report);
+    snapshot::write(&report, &agents);
     // The notify worker owns threshold deduplication and delivery settings.
     let displays: HashMap<String, String> =
         sources.iter().map(|s| (s.id.clone(), s.display.clone())).collect();
@@ -1046,50 +1077,59 @@ fn host_gate_open(tool: &str, auto_checkin: bool, alive: &Option<HashSet<String>
 
 struct QuotaForReport {
     rows: Vec<QuotaView>,
-    include_log_samples: bool,
+    queried_tools: Vec<&'static str>,
 }
 
-// 冷启动从磁盘恢复；运行期间沿用上一次发布的厂商额度。
-fn cached_quota(previous: Option<&[QuotaView]>, settings: &Settings) -> Vec<QuotaView> {
-    if settings.quota_probes_off.iter().any(|tool| tool == crate::PANEL_TOOL) {
-        return Vec::new();
-    }
-    match previous {
-        Some(rows) => rows.iter().filter(|row| {
-            row.tool == crate::PANEL_TOOL && row.origin != QuotaOrigin::Budget
-        }).cloned().collect(),
-        None => usage_quota::cached_for_tool(crate::PANEL_TOOL),
-    }
+// 继续展示启用工具的缓存，重新启用时可从磁盘恢复上次结果。
+fn cached_quota(previous: &[QuotaView], settings: &Settings) -> Vec<QuotaView> {
+    settings.active_agent_ids().into_iter()
+        .filter(|tool| !settings.quota_probes_off.iter().any(|off| off == tool))
+        .flat_map(|tool| {
+            let rows: Vec<_> = previous.iter().filter(|row| row.tool == tool && row.origin != QuotaOrigin::Budget)
+                .cloned().collect();
+            if rows.is_empty() { usage_quota::cached_for_tool(tool) } else { rows }
+        }).collect()
 }
 
 // 普通发布沿用快照；定时或手动刷新读取厂商与日志里的新额度。
-fn quota_for_report(shared: &Shared, mode: QuotaMode) -> QuotaForReport {
-    let settings = shared.settings();
-    if let Some(source) = mode.request_source().filter(|_| quota_request_allowed(&settings)) {
-        // 在引擎线程查询，失败时读取缓存中的上次成功结果。
-        return QuotaForReport { rows: refresh_quota(source), include_log_samples: true };
-    }
+fn quota_for_report(shared: &Shared, settings: &Settings, mode: QuotaMode) -> QuotaForReport {
     let previous = shared.report.lock().ok().and_then(|slot| {
         slot.as_ref().map(|report| report.quotas.clone())
     });
-    QuotaForReport { rows: cached_quota(previous.as_deref(), &settings), include_log_samples: false }
+    let mut rows = cached_quota(previous.as_deref().unwrap_or_default(), settings);
+    let mut queried_tools = Vec::new();
+    if let Some(source) = mode.request_source() {
+        queried_tools = quota_request_tools(settings);
+        if !queried_tools.is_empty() {
+            let fresh = refresh_quota(source, &queried_tools);
+            rows.retain(|row| !queried_tools.contains(&row.tool.as_str()));
+            rows.extend(fresh);
+        }
+    }
+    QuotaForReport { rows, queried_tools }
 }
 
 // 尊重总开关、厂商开关及宿主退出暂停设置。
-fn quota_request_allowed(settings: &Settings) -> bool {
-    if !settings.probe_allowed(crate::PANEL_TOOL) {
-        return false;
+fn quota_request_tools(settings: &Settings) -> Vec<&'static str> {
+    if !settings.quota_polling {
+        return Vec::new();
+    }
+    let agents = settings.active_agent_ids();
+    if agents.is_empty() {
+        return agents;
     }
     let alive = settings.host_exit_pause.then(usage_quota::host::running_process_names);
-    host_gate_open(crate::PANEL_TOOL, false, &alive)
+    agents.into_iter()
+        .filter(|tool| settings.probe_allowed(tool) && host_gate_open(tool, settings.auto_checkin, &alive))
+        .collect()
 }
 
 // 在后台引擎线程查询配额，失败时由缓存层保留上次成功的结果。
-fn refresh_quota(source: &str) -> Vec<QuotaView> {
+fn refresh_quota(source: &str, tools: &[&str]) -> Vec<QuotaView> {
     let started = Instant::now();
-    let rows = usage_quota::refresh_for_tool(crate::PANEL_TOOL);
+    let rows = usage_quota::refresh_tools(tools);
     let notes: Vec<_> = usage_quota::take_probe_notes().into_iter()
-        .filter(|(tool, _)| *tool == crate::PANEL_TOOL)
+        .filter(|(tool, _)| tools.contains(tool))
         .map(|(_, note)| note)
         .collect();
     crate::logging::info(&format!(

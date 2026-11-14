@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { PANEL_THEME_KEYS } from "../types";
-import type { BubbleSkin, DiagnosticsResponse, McpClientConfig, NotifyState, NotifyTierKey, PanelSettings, ProbeTool, SyncDevicesSnapshot, ThemeKey, TrayMode, UpdateStatus } from "../types";
+import type { AgentOption, BubbleSkin, DiagnosticsResponse, McpClientConfig, NotifyState, NotifyTierKey, PanelSettings, ProbeTool, SyncDevicesSnapshot, ThemeKey, TrayMode, UpdateStatus } from "../types";
 import { bridge, inTauri, isMac, isWindows } from "../lib/bridge";
 import { t, type StrKey } from "../lib/i18n";
 import { toolDisplay, TRAY_MODE_LABEL, TRAY_MODES } from "../lib/format";
@@ -79,11 +79,12 @@ async function copyText(value: string): Promise<boolean> {
   }
 }
 
-type Tab = "general" | "pet" | "alert" | "advanced" | "about";
+type Tab = "general" | "agents" | "pet" | "alert" | "advanced" | "about";
 // Label keys are literals rather than a `set.tab.${k}` template so the parity
 // gate (scripts/check-i18n-parity.py) can see each tab's copy is reached.
 const TABS: { key: Tab; label: () => string }[] = [
   { key: "general", label: () => t("set.tab.general") },
+  { key: "agents", label: () => t("set.tab.agents") },
   { key: "pet", label: () => t("set.tab.pet") },
   { key: "alert", label: () => t("set.tab.alert") },
   { key: "advanced", label: () => t("set.tab.advanced") },
@@ -98,10 +99,8 @@ function nameOf(p: ProbeTool, displays: Record<string, string>): string {
 }
 
 /**
- * The panel's knobs as a bottom sheet of a fixed 65%: four tabs, and the two
- * settings whose value is a list of tools open a page inside the same sheet
- * (`›`) rather than expanding in place — an inline expansion would push the
- * sheet past 460 px of body and take the tab strip off screen with it.
+ * The tab strip and footer stay visible while settings content scrolls.
+ * Per-tool quota and mute settings open subpages in the same sheet.
  *
  * The height is written, not capped: a `max-height` sheet changes height when a
  * tab is shorter than the last, and a panel that jumps under the cursor loses
@@ -115,6 +114,7 @@ export function SettingsSheet({
   onRefreshSecs,
   onMoney,
   onQuotaPolling,
+  onAgentsChange,
   onTrayModeChange,
   displays,
 }: {
@@ -125,6 +125,7 @@ export function SettingsSheet({
   /** Dollar figures on/off, so the panel repaints without waiting for a report. */
   onMoney: (on: boolean) => void;
   onQuotaPolling: (on: boolean) => void;
+  onAgentsChange: (ids: string[]) => void;
   onTrayModeChange: (mode: TrayMode) => Promise<void>;
   displays: Record<string, string>;
 }) {
@@ -139,6 +140,9 @@ export function SettingsSheet({
   const [progress, setProgress] = useState<number | null>(null);
   const [tab, setTab] = useState<Tab>("general");
   const [list, setList] = useState<List | null>(null);
+  const [agents, setAgents] = useState<AgentOption[]>([]);
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [agentError, setAgentError] = useState<string | null>(null);
   const [quotaPollingBusy, setQuotaPollingBusy] = useState(false);
   const [quotaPollingError, setQuotaPollingError] = useState(false);
   const [probes, setProbes] = useState<ProbeTool[]>([]);
@@ -182,6 +186,11 @@ export function SettingsSheet({
     });
     void bridge.notifyStatus().then((s) => alive && setNotify(s));
     void bridge.probeTools().then((p) => alive && setProbes(p));
+    void bridge.availableAgents().then((items) => {
+      if (alive) setAgents(items);
+    }).catch(() => {
+      if (alive) setAgentError(t("set.agents.load-error"));
+    });
     return () => {
       alive = false;
     };
@@ -357,12 +366,28 @@ export function SettingsSheet({
     void bridge.setHostExitPause(on);
   };
 
-  /* 其他厂商的自动签到切换保留，Codex 版不挂载该操作。
+  // 保存自动签到偏好，探测时仍会检查工具是否启用。
   const setAutoCheckin = (on: boolean) => {
     patch((s) => ({ ...s, auto_checkin: on }));
     void bridge.setAutoCheckin(on);
   };
-  */
+
+  // 等待后端保存成功再更新列表及相关设置项。
+  const setAgentEnabled = async (id: string, enabled: boolean) => {
+    if (agentBusy) return;
+    setAgentBusy(true);
+    setAgentError(null);
+    try {
+      const saved = await bridge.setAgentEnabled({ id, enabled });
+      patch((settings) => ({ ...settings, enabled_agents: saved }));
+      onAgentsChange(saved);
+      void bridge.probeTools().then(setProbes).catch(() => {});
+    } catch {
+      setAgentError(t("set.agents.save-error"));
+    } finally {
+      setAgentBusy(false);
+    }
+  };
 
   // 保存总开关后同步配额页和逐工具状态。
   const setQuotaPolling = async (on: boolean) => {
@@ -578,6 +603,7 @@ export function SettingsSheet({
     }
   };
 
+  // 根据当前标签或子页渲染设置内容。
   const body = () => {
     if (!settings) return null;
     if (list === "probe" || list === "mute") {
@@ -627,26 +653,7 @@ export function SettingsSheet({
     }
     return (
       <>
-        <div className="sheet-tabs" role="tablist" onKeyDown={(e) => {
-          const at = TABS.findIndex((x) => x.key === tab);
-          const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
-          if (!step) return;
-          e.preventDefault();
-          setTab(TABS[(at + step + TABS.length) % TABS.length].key);
-        }}>
-          {TABS.map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              className="sheet-tab"
-              aria-selected={tab === key}
-              onClick={() => setTab(key)}
-            >
-              {label()}
-            </button>
-          ))}
-        </div>
+        {tab === "agents" ? agentList(settings) : null}
         {tab === "general" ? (
           <>
             <div className="sheet-row">
@@ -859,11 +866,7 @@ export function SettingsSheet({
             {quotaPollingError && <p className="sheet-hint" role="alert">{t("quota.polling.error")}</p>}
             {switchRow(t("set.ttft"), t("set.ttft.hint"), settings.ttft_enabled, (on) => void setTtft(on), ttftBusy)}
             {ttftError ? <p className="sheet-hint" role="alert">{t("set.ttft.failed")}</p> : null}
-            {/* Master off ⇒ no claim can fire at all, so the guarantee would be
-                a promise the app cannot keep; the row locks like set.pause does. */}
-            {/* Codex 无签到接口。
             {switchRow(t("set.checkin"), t("set.checkin.hint"), settings.auto_checkin, setAutoCheckin, !settings.quota_polling)}
-            */}
             {navRow("probe", t("set.perprobe"), t("set.perprobe.hint"), offCount ? t("set.perprobe.off", { n: offCount }) : t("set.perprobe.all"))}
           </>
         ) : null}
@@ -906,6 +909,31 @@ export function SettingsSheet({
     );
   };
 
+  // 使用现有设置开关渲染完整 Agent 清单。
+  const agentList = (current: PanelSettings) => (
+    <div className="sheet-list">
+      <p className="sheet-summary">
+        <span className="num">{t("set.agents.count", { n: current.enabled_agents.length })}</span>
+        <span className="sheet-hint sheet-agent-hint">{t("set.agents.hint")}</span>
+      </p>
+      {agentError && <p className="sheet-hint" role="alert">{agentError}</p>}
+      {agents.map(({ id, name }) =>
+        <Fragment key={id}>{switchRow(name, null, current.enabled_agents.includes(id),
+          (enabled) => void setAgentEnabled(id, enabled), agentBusy)}</Fragment>)}
+    </div>
+  );
+
+  // 左右键切换标签并将焦点移到新选中的按钮。
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const current = TABS.findIndex(({ key }) => key === tab);
+    const next = (current + step + TABS.length) % TABS.length;
+    setTab(TABS[next].key);
+    event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+  };
+
   return (
     <div className="sheet-backdrop" onClick={onClose}>
       <div
@@ -935,7 +963,22 @@ export function SettingsSheet({
             <IconClose size={12} />
           </button>
         </div>
-        <div className="sheet-body">{body()}</div>
+        {!list && settings && (
+          <div className="sheet-tabs" role="tablist" aria-label={t("set.title")} onKeyDown={onTabKeyDown}>
+            {TABS.map(({ key, label }) => (
+              <button key={key} id={`settings-tab-${key}`} type="button" role="tab" className="sheet-tab"
+                aria-selected={tab === key} aria-controls="settings-tab-panel"
+                tabIndex={tab === key ? 0 : -1} onClick={() => setTab(key)}>
+                {label()}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="sheet-body" key={list ?? tab}
+          id={list ? undefined : "settings-tab-panel"} role={list ? undefined : "tabpanel"}
+          aria-labelledby={list || !settings ? undefined : `settings-tab-${tab}`}>
+          {body()}
+        </div>
         {skinError ? (
           <div className="sheet-notice" role="alert">
             {skinError}

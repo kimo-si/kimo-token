@@ -2890,9 +2890,9 @@ pub async fn get_report(app: AppHandle, force: bool) -> Result<Report, String> {
 
 // 处理可见面板上的手动查询，与自动配额探测分别控制。
 #[tauri::command]
-pub async fn get_codex_reset_credits() -> usage_quota::CodexResetCredits {
+pub async fn get_codex_reset_credits(app: AppHandle) -> usage_quota::CodexResetCredits {
     use usage_quota::CodexResetCredits;
-    if panel::is_panel_hidden() {
+    if panel::is_panel_hidden() || !app.state::<Shared>().agent_enabled(crate::PANEL_TOOL) {
         return CodexResetCredits::Unavailable { cards: None };
     }
     // 读取本地登录状态及 HTTPS 请求都交给阻塞线程。
@@ -3059,8 +3059,45 @@ pub async fn refresh_pricing(app: AppHandle) -> Result<PricingMeta, String> {
 /// panel a coloured monogram, never a figure.
 #[tauri::command]
 pub async fn tool_icons() -> Result<BTreeMap<String, String>, String> {
-    Ok(usage_core::icons::icon_data_urls().into_iter()
-        .filter(|(tool, _)| tool == crate::PANEL_TOOL).collect())
+    tauri::async_runtime::spawn_blocking(usage_core::icons::icon_data_urls)
+        .await.map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentOption {
+    id: &'static str,
+    name: &'static str,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AgentSelection {
+    id: String,
+    enabled: bool,
+}
+
+// 从用量适配器注册表生成设置清单。
+#[tauri::command]
+pub fn available_agents() -> Vec<AgentOption> {
+    usage_adapter_all::builtin_adapters().iter()
+        .map(|adapter| AgentOption { id: adapter.id(), name: adapter.display_name() }).collect()
+}
+
+// 保存单个 Agent 的开关，唤醒引擎更新采集来源和报表。
+#[tauri::command]
+pub async fn set_agent_enabled(app: AppHandle, selection: AgentSelection) -> Result<Vec<String>, String> {
+    if !usage_adapter_all::TOOL_IDS.contains(&selection.id.as_str()) {
+        return Err("Unknown agent".into());
+    }
+    let sender = app.try_state::<EngineChannel>().ok_or("Engine unavailable")?.0.clone();
+    // 通过设置锁串行写入，成功后再通知引擎。
+    let settings = mutate_settings_async(&app, move |settings| {
+        settings.set_agent_enabled(selection.id, selection.enabled);
+    }).await?;
+    let _ = sender.send(Msg::Refresh);
+    if let Some(ttft) = app.try_state::<crate::ttft::TtftState>() {
+        ttft.refresh_snapshot();
+    }
+    Ok(settings.active_agent_ids().into_iter().map(str::to_owned).collect())
 }
 
 /// What the settings sheet shows: the switches plus the build version.
@@ -3075,6 +3112,7 @@ pub struct PanelSettings {
     pub show_cycle_tokens: bool,
     pub ttft_enabled: bool,
     pub performance_monitoring: bool,
+    pub enabled_agents: Vec<String>,
     pub hide_unused_tools: bool,
     pub hide_unused_quota: bool,
     pub hide_unused_estimation: bool,
@@ -3109,15 +3147,15 @@ pub struct ProbeRow {
 #[tauri::command]
 pub async fn probe_tools(app: AppHandle) -> Result<Vec<ProbeRow>, String> {
     let settings = app.state::<Shared>().settings();
-    Ok(usage_quota::inventory_for_tool(crate::PANEL_TOOL)
-        .into_iter()
-        .map(|p| ProbeRow {
-            polling: settings.probe_allowed(p.tool),
-            id: p.tool,
-            host_gated: p.host_gated,
-            answered_here: p.answered_here,
-        })
-        .collect())
+    // 在后台读取配额缓存，只返回已启用 Agent 的配额开关。
+    tauri::async_runtime::spawn_blocking(move || usage_quota::inventory().into_iter()
+        .filter(|probe| settings.agent_enabled(probe.tool))
+        .map(|probe| ProbeRow {
+            polling: settings.probe_allowed(probe.tool),
+            id: probe.tool,
+            host_gated: probe.host_gated,
+            answered_here: probe.answered_here,
+        }).collect()).await.map_err(|error| error.to_string())
 }
 
 /// Open a release page / mailto link in the user's browser. The scheme
@@ -3179,6 +3217,7 @@ pub async fn get_panel_settings(app: AppHandle) -> Result<PanelSettings, String>
         show_cycle_tokens: settings.show_cycle_tokens,
         ttft_enabled: settings.ttft_enabled,
         performance_monitoring: settings.performance_monitoring,
+        enabled_agents: settings.active_agent_ids().into_iter().map(str::to_owned).collect(),
         hide_unused_tools: settings.hide_unused_tools,
         hide_unused_quota: settings.hide_unused_quota,
         hide_unused_estimation: settings.hide_unused_estimation,
@@ -3381,21 +3420,11 @@ pub fn get_ttft_snapshot(app: AppHandle) -> crate::ttft::TtftSnapshot {
     app.state::<crate::ttft::TtftState>().snapshot()
 }
 
+// 保存采样偏好后释放设置锁，再通知测速界面。
 #[tauri::command]
-pub fn set_ttft_enabled(app: AppHandle, on: bool) -> Result<(), String> {
-    let ttft = app.state::<crate::ttft::TtftState>();
-    let shared = app.state::<Shared>();
-    let mut settings = shared.settings.lock().map_err(|_| "settings busy")?;
-    let previous = settings.ttft_enabled;
-    if previous == on { return Ok(()); }
-    ttft.set_enabled(on)?;
-    let mut next = settings.clone();
-    next.ttft_enabled = on;
-    if let Err(error) = next.save().map_err(|error| error.to_string()) {
-        let _ = ttft.set_enabled(previous);
-        return Err(error.to_string());
-    }
-    *settings = next;
+pub async fn set_ttft_enabled(app: AppHandle, on: bool) -> Result<(), String> {
+    mutate_settings_async(&app, move |settings| settings.ttft_enabled = on).await?;
+    app.state::<crate::ttft::TtftState>().refresh_snapshot();
     Ok(())
 }
 
@@ -3513,7 +3542,10 @@ pub struct CheckinResult {
 }
 
 #[tauri::command]
-pub async fn checkin_now(tool: String) -> Result<CheckinResult, String> {
+pub async fn checkin_now(app: AppHandle, tool: String) -> Result<CheckinResult, String> {
+    if !app.state::<Shared>().agent_enabled(&tool) {
+        return Err("Agent is disabled".into());
+    }
     // The registry owns the dispatch (usage_quota::CHECKIN_TOOLS): the same
     // table the engine's exemption and the strip's control read, so a claim
     // added there is claimable here without a second list. A tool outside it

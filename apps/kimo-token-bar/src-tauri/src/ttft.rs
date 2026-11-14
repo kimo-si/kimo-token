@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use usage_core::{DateFilter, SourceAdapter};
 
 use crate::claude_otel_ttft::{MetricField, ServerHandle};
@@ -68,7 +68,6 @@ struct StoredSamples {
 }
 
 struct Inner {
-    enabled: bool,
     claude_receiver: String,
     claude_config_status: String,
     revision: u64,
@@ -87,7 +86,8 @@ pub struct TtftState {
 }
 
 impl TtftState {
-    pub fn new(app: AppHandle, path: PathBuf, enabled: bool) -> Self {
+    // 加载历史样本，采样开关以共享设置为准。
+    pub fn new(app: AppHandle, path: PathBuf) -> Self {
         let stored = std::fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<StoredSamples>(&bytes).ok())
@@ -99,7 +99,6 @@ impl TtftState {
             .take(MAX_SAMPLES).collect::<Vec<_>>();
         Self {
             inner: Arc::new(Mutex::new(Inner {
-                enabled,
                 claude_receiver: "disabled".into(),
                 claude_config_status: "disabled".into(),
                 revision: 0,
@@ -156,30 +155,27 @@ impl TtftState {
     }
 
     pub fn snapshot(&self) -> TtftSnapshot {
+        let settings = self.app.state::<crate::engine::Shared>().settings();
+        let agent_enabled = settings.agent_enabled(crate::PANEL_TOOL);
         self.inner.lock().map(|inner| TtftSnapshot {
             revision: inner.revision,
-            enabled: inner.enabled,
+            enabled: settings.ttft_enabled && agent_enabled,
             claude_receiver: inner.claude_receiver.clone(),
             claude_config_status: inner.claude_config_status.clone(),
-            samples: inner.samples.clone(),
+            samples: if agent_enabled { inner.samples.clone() } else { Vec::new() },
             hosts: TtftHosts::default(),
         }).unwrap_or(TtftSnapshot { revision: 0, enabled: false, claude_receiver: "error".into(), claude_config_status: "error".into(), samples: Vec::new(), hosts: TtftHosts::default() })
     }
 
     /// The scanner's cheap poll: no process table walk, just the flag.
     pub fn is_enabled(&self) -> bool {
-        self.inner.lock().is_ok_and(|inner| inner.enabled)
+        let settings = self.app.state::<crate::engine::Shared>().settings();
+        settings.ttft_enabled && settings.agent_enabled(crate::PANEL_TOOL)
     }
 
-    // 当前开关只控制 Codex 的本地采样。
-    pub fn set_enabled(&self, enabled: bool) -> Result<(), String> {
-        let mut inner = self.inner.lock().map_err(|_| "TTFT service is busy.".to_string())?;
-        if inner.enabled == enabled { return Ok(()); }
-        inner.enabled = enabled;
-        inner.revision = inner.revision.wrapping_add(1);
-        drop(inner);
+    // 列表保存后立即通知速度页。
+    pub fn refresh_snapshot(&self) {
         self.publish();
-        Ok(())
     }
 
     fn start_receiver(&self, inner: &mut Inner) {
@@ -213,17 +209,17 @@ impl TtftState {
     }
 
     fn add_samples(&self, samples: Vec<TtftSample>) {
+        if !self.is_enabled() { return; }
         let samples = samples.into_iter().filter(valid_sample).collect::<Vec<_>>();
         if samples.is_empty() { return; }
         let Ok(mut inner) = self.inner.lock() else { return };
-        if !inner.enabled { return; }
         for sample in samples.into_iter().rev() { inner.samples.insert(0, sample); }
         let cutoff = now_ms().saturating_sub(SAMPLE_DAYS * 86_400_000);
         inner.samples.retain(|sample| sample.sampled_at_ms >= cutoff);
         inner.samples.truncate(MAX_SAMPLES);
         inner.revision = inner.revision.wrapping_add(1);
         let snapshot = TtftSnapshot {
-            revision: inner.revision, enabled: inner.enabled,
+            revision: inner.revision, enabled: true,
             claude_receiver: inner.claude_receiver.clone(),
             claude_config_status: inner.claude_config_status.clone(),
             samples: inner.samples.clone(),
@@ -246,7 +242,8 @@ impl TtftState {
     }
 
     fn persist(&self) {
-        let samples = self.snapshot().samples;
+        // 保存原始样本，关闭工具只是暂时从界面隐藏它们。
+        let Ok(samples) = self.inner.lock().map(|inner| inner.samples.clone()) else { return };
         if let Some(parent) = self.path.parent() {
             if let Err(error) = std::fs::create_dir_all(parent) {
                 crate::logging::error(&format!("ttft: create sample directory failed: {error}"));

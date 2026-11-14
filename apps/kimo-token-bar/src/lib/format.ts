@@ -81,6 +81,12 @@ export function toolDisplay(id: string): string {
   return DISPLAY[id] ?? id.charAt(0).toUpperCase() + id.slice(1);
 }
 
+// 浏览器预览使用现有工具名称，桌面版直接从 Rust 注册表读取列表。
+export function previewAgentOptions() {
+  return TOOL_ORDER.flatMap((id) => id === "qoder" ? [id, "qoder_cn"] : [id])
+    .map((id) => ({ id, name: toolDisplay(id) }));
+}
+
 /** Colour is assigned by id, never by rank, so a tool keeps its colour across periods. */
 export function toolSlot(id: string): number {
   const exact = TOOL_ORDER.indexOf(id === "qoder_cn" ? "qoder" : id);

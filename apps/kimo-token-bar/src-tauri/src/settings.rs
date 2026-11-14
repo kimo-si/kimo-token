@@ -215,6 +215,8 @@ pub struct Settings {
     /// Opt-in process CPU and resident-memory sampling to panel.log.
     #[serde(default)]
     pub performance_monitoring: bool,
+    /// Desktop adapters selected for local collection and reports.
+    pub enabled_agents: Vec<String>,
     /// Hide tools whose session count for the period is zero from the tools
     /// page and the quota list. Default on: a tool that did nothing this
     /// window is noise, and the pages' job is comparing what ran. The tools
@@ -300,6 +302,7 @@ impl Default for Settings {
             show_cycle_tokens: false,
             ttft_enabled: false,
             performance_monitoring: false,
+            enabled_agents: vec![crate::PANEL_TOOL.to_owned()],
             hide_unused_tools: true,
             hide_unused_quota: false,
             hide_unused_estimation: false,
@@ -324,6 +327,24 @@ impl Default for Settings {
 }
 
 impl Settings {
+    // 按注册表顺序解析选择，忽略已经不在注册表中的 ID。
+    pub fn active_agent_ids(&self) -> Vec<&'static str> {
+        usage_adapter_all::TOOL_IDS.iter().copied().filter(|id| self.agent_enabled(id)).collect()
+    }
+
+    // 判断工具是否启用了桌面采集。
+    pub fn agent_enabled(&self, id: &str) -> bool {
+        self.enabled_agents.iter().any(|agent| agent == id)
+    }
+
+    // 单独更新一个开关，保留并发保存的其他选择。
+    pub fn set_agent_enabled(&mut self, id: String, enabled: bool) {
+        self.enabled_agents.retain(|agent| agent != &id);
+        if enabled {
+            self.enabled_agents.push(id);
+        }
+    }
+
     /// Whether this tool's probe may run this pass: the master switch first, then
     /// the user's own exclusions. The engine checks the host separately.
     pub fn probe_allowed(&self, tool: &str) -> bool {
@@ -357,6 +378,20 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 旧设置沿用 Codex，显式全部关闭在重启后仍为空列表。
+    #[test]
+    fn agent_selection_survives_legacy_settings_and_an_empty_list() {
+        let mut settings: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.active_agent_ids(), [crate::PANEL_TOOL]);
+        settings.set_agent_enabled("claude".into(), true);
+        settings.set_agent_enabled("claude".into(), true);
+        assert_eq!(settings.active_agent_ids(), ["claude", crate::PANEL_TOOL]);
+        settings.set_agent_enabled("claude".into(), false);
+        settings.set_agent_enabled(crate::PANEL_TOOL.into(), false);
+        let restored: Settings = serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert!(restored.active_agent_ids().is_empty());
+    }
 
     #[test]
     fn bubble_skin_defaults_to_waterdrop_for_old_settings() {

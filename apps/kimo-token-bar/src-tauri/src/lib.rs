@@ -27,7 +27,7 @@ mod windows_diagnostics;
 
 pub use settings::{BubbleSkin, Settings, TrayMode};
 
-// 桌面版只注册 Codex，完整厂商实现继续留在工作区中。
+// 新旧安装默认使用 Codex，测速和现有同步协议仍使用这个厂商。
 const PANEL_TOOL: &str = "codex";
 
 use std::sync::mpsc::Receiver;
@@ -104,7 +104,7 @@ pub fn run() {
             commands::get_panel_settings,
             commands::set_autostart,
             commands::set_refresh_secs,
-            // commands::checkin_now, // Codex 没有签到入口。
+            commands::checkin_now,
             commands::set_theme,
             commands::set_show_money,
             commands::set_quota_display_mode,
@@ -137,12 +137,14 @@ pub fn run() {
             updater::get_auto_update_check,
             updater::set_auto_update_check,
             commands::set_host_exit_pause,
-            // commands::set_auto_checkin, // 保留其他厂商的签到实现。
+            commands::set_auto_checkin,
             commands::set_quota_polling,
             commands::set_notify_device_presence,
             commands::set_notify_sync_status,
             commands::set_tool_polling,
             commands::probe_tools,
+            commands::available_agents,
+            commands::set_agent_enabled,
             commands::set_notify_tiers,
             commands::set_plan_expiry_notify_days,
             commands::set_tool_muted,
@@ -196,6 +198,8 @@ pub fn run() {
             // themselves call through this hook, so usage-quota stays
             // host-agnostic.
             usage_quota::set_checkin_log(std::sync::Arc::new(|msg| crate::logging::checkin(msg)));
+            // 启动时应用用户保存的自动签到开关。
+            usage_quota::set_auto_checkin_enabled(app.state::<engine::Shared>().settings().auto_checkin);
             usage_quota::set_login_expired_note(std::sync::Arc::new(|tool, host| {
                 notify::post_login_expired(tool, host)
             }));
@@ -207,7 +211,7 @@ pub fn run() {
             diagnostics::DiagnosticsState::restore_on_launch(&handle);
             let ttft_dir = usage_core::paths::local_data_dir()
                 .unwrap_or_else(|| std::path::PathBuf::from("kimo-token")).join("ttft.json");
-            let ttft_state = ttft::TtftState::new(handle.clone(), ttft_dir, handle.state::<engine::Shared>().settings().ttft_enabled);
+            let ttft_state = ttft::TtftState::new(handle.clone(), ttft_dir);
             ttft_state.start();
             app.manage(ttft_state);
             tray::build(&handle)?;

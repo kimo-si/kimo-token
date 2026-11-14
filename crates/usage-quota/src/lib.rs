@@ -313,6 +313,12 @@ pub fn collect_gated(
     )
 }
 
+// 只刷新已选择的厂商，并保留单厂商强制刷新的缓存回退规则。
+pub fn refresh_tools(tools: &[&str]) -> Vec<QuotaView> {
+    let probes = built_in().into_iter().filter(|probe| tools.contains(&probe.tool())).collect();
+    collect_probes_with_mode(BUDGET, probes, cache::Cache::open("quota", TTL), &|_| true, cache::ProbeMode::Force)
+}
+
 // 由调用方决定查询间隔；查询指定厂商时跳过内部有效期，但保留旧缓存。
 pub fn refresh_for_tool(tool: &str) -> Vec<QuotaView> {
     let Some(probe) = built_in().into_iter().find(|probe| probe.tool() == tool) else {
@@ -355,6 +361,17 @@ fn collect_probes_gated(
     cache: Option<cache::Cache>,
     gate: &dyn Fn(&str) -> bool,
 ) -> Vec<QuotaView> {
+    collect_probes_with_mode(budget, probes, cache, gate, cache::ProbeMode::Cached)
+}
+
+// 共用并行查询和超时回退，调用方决定查询是否跳过缓存有效期。
+fn collect_probes_with_mode(
+    budget: Duration,
+    probes: Vec<Box<dyn QuotaProbe>>,
+    cache: Option<cache::Cache>,
+    gate: &dyn Fn(&str) -> bool,
+    mode: cache::ProbeMode,
+) -> Vec<QuotaView> {
     use std::collections::HashSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
@@ -387,7 +404,7 @@ fn collect_probes_gated(
                         .map(|c| c.stale(probe.tool()).unwrap_or_default())
                         .unwrap_or_default()
                 } else {
-                    cache::probe(cached, probe.as_ref())
+                    cache::probe_with_mode(cached, probe.as_ref(), mode)
                 };
                 if let Ok(mut slot) = shared.lock() {
                     slot.extend(views);
@@ -416,10 +433,8 @@ fn collect_probes_gated(
         if answered.contains(name) {
             continue;
         }
-        if let Some(cache) = cache.as_ref() {
-            if let Some(views) = cache.within(name, cache::GRACE) {
-                out.extend(views);
-            }
+        if let Some(views) = mode.fallback(cache.as_ref().as_ref(), name) {
+            out.extend(views);
         }
     }
     // Tool grouping only; inside a tool each probe's own row order stands. The

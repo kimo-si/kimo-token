@@ -103,7 +103,10 @@ function SpeedRow({ nameKey, granularityKey, tool, samples, now, canTest, testin
   );
 }
 
-export function SpeedPage({ snapshot, now, scope }: { snapshot: TtftSnapshot; now: number; scope: MachineScope }) {
+// 速度页根据 Agent 的开关展示 Codex 采样和测速入口。
+export function SpeedPage({ snapshot, now, scope, codexEnabled }: {
+  snapshot: TtftSnapshot; now: number; scope: MachineScope; codexEnabled: boolean;
+}) {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [activeTest, setActiveTest] = useState<ActiveSpeedTest | null>(null);
   const [activeError, setActiveError] = useState<string | null>(null);
@@ -120,7 +123,7 @@ export function SpeedPage({ snapshot, now, scope }: { snapshot: TtftSnapshot; no
   // honesty the quota strip's 本机·与筛选无关 note uses).
   const scopedAway = scope.kind === "origin";
   // 桌面版只显示 Codex 测速入口。
-  const visible = PROVIDERS.filter((p) => p.id === "codex");
+  const visible = PROVIDERS.filter((p) => p.id === "codex" && codexEnabled);
   const runTest = async (provider: ActiveSpeedTest["provider"]) => {
     if (testing) return;
     setTesting(provider);
@@ -150,7 +153,7 @@ export function SpeedPage({ snapshot, now, scope }: { snapshot: TtftSnapshot; no
     >
       {aboutOpen ? <p className="ttft-about-note" id="ttft-about-note" role="note">{t("ttft.about")}</p> : null}
       {scopedAway ? <p className="ttft-note">{t("ttft.scoped", { name: scope.name })}</p> : null}
-      {!scopedAway && visible.length === 0 ? <p className="ttft-note">{t("ttft.no_host")}</p> : null}
+      {!scopedAway && visible.length === 0 ? <p className="ttft-note">{t("ttft.codex.off")}</p> : null}
       {!scopedAway && visible.length > 0 ? (
         <ol className="speed-list">
           {visible.map((p) => (
@@ -159,7 +162,7 @@ export function SpeedPage({ snapshot, now, scope }: { snapshot: TtftSnapshot; no
           ))}
         </ol>
       ) : null}
-      {!scopedAway && activeTest ? <p className="ttft-active-result" role="status">
+      {!scopedAway && codexEnabled && activeTest ? <p className="ttft-active-result" role="status">
         <span>{t("ttft.active.result", { provider: t(activeProvider), age: relativeTime(activeTest.sampledAtMs, now) })}</span>
         <strong>{Math.round(activeTest.ttftMs)} ms</strong>
         {activeTest.tps != null ? <strong>{activeTest.tps.toFixed(1)} TPS</strong> : null}

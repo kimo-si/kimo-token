@@ -13,6 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tauri::Manager;
 
 use crate::claude_otel_ttft::{self, MetricField};
 
@@ -38,10 +39,13 @@ pub struct ActiveSpeedTest {
 }
 
 #[tauri::command]
-pub async fn run_active_speed_test(provider: String) -> Result<ActiveSpeedTest, String> {
+pub async fn run_active_speed_test(app: tauri::AppHandle, provider: String) -> Result<ActiveSpeedTest, String> {
     let provider = provider.trim().to_ascii_lowercase();
     if provider != crate::PANEL_TOOL {
         return Err("Active speed checks are available for Codex.".into());
+    }
+    if !app.state::<crate::engine::Shared>().agent_enabled(&provider) {
+        return Err("Agent is disabled".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
         let gate = ACTIVE_TEST.get_or_init(|| Mutex::new(()));

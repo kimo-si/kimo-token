@@ -631,6 +631,8 @@ export interface Bridge {
   setToolPolling: (tool: string, on: boolean) => Promise<void>;
   /** The registry's own list, with what this machine has answered. */
   probeTools: () => Promise<ProbeTool[]>;
+  availableAgents: () => Promise<AgentOption[]>;
+  setAgentEnabled: (selection: AgentSelection) => Promise<string[]>;
   setNotifyTiers: (tiers: NotifyTierKey) => Promise<void>;
   setPlanExpiryNotifyDays: (days: number | null) => Promise<void>;
   setToolMuted: (tool: string, on: boolean) => Promise<void>;
@@ -725,6 +727,7 @@ export interface ActiveSpeedTest {
 }
 
 export interface PanelSettings {
+  enabled_agents: string[];
   tray_mode: TrayMode;
   autostart: boolean;
   refresh_secs: number;
@@ -770,6 +773,16 @@ export interface PanelSettings {
  *  so it cannot separate anything. Names come from the report's own
  *  `sources[].display`, falling back to `toolDisplay` for the probes with no
  *  adapter (copilot, gemini). */
+export interface AgentOption {
+  id: string;
+  name: string;
+}
+
+export interface AgentSelection {
+  id: string;
+  enabled: boolean;
+}
+
 export interface ProbeTool {
   id: string;
   /** Whether `host_exit_pause` can reach this probe at all. */

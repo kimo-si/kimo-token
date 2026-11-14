@@ -26,10 +26,13 @@ use usage_core::report::{MachineScope, Report};
 /// is not going to take that long again.
 const MAX_AGE_MS: i64 = 3_600_000;
 
-// 标记报告使用的厂商范围，启动时跳过旧版多厂商快照。
+// 标记报告使用的厂商范围，并兼容旧版单厂商快照。
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SavedReport<T> {
-    desktop_tool: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    desktop_tool: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    enabled_agents: Option<Vec<String>>,
     #[serde(flatten)]
     report: T,
 }
@@ -58,12 +61,16 @@ fn today_key() -> String {
 /// Persist `report` as the next launch's first frame. Only a freshly folded
 /// report belongs on disk: writing a restored one back would let a snapshot
 /// survive a reboot it should not have outlived.
-pub fn write(report: &Report) {
+pub fn write(report: &Report, agents: &[&str]) {
     if report.from_previous_run {
         return;
     }
     let Some(path) = path() else { return };
-    let saved = SavedReport { desktop_tool: crate::PANEL_TOOL.to_owned(), report };
+    let saved = SavedReport {
+        desktop_tool: None,
+        enabled_agents: Some(agents.iter().map(|id| (*id).to_owned()).collect()),
+        report,
+    };
     let json = match serde_json::to_string(&saved) {
         Ok(json) => json,
         Err(e) => {
@@ -107,7 +114,7 @@ pub fn write(report: &Report) {
 ///
 /// Anything else — missing, unparsable, a schema that moved on — returns `None`
 /// and the boot path behaves exactly as it did before this file existed.
-pub fn read(scope: &MachineScope) -> Option<Report> {
+pub fn read(scope: &MachineScope, agents: &[&str]) -> Option<Report> {
     let path = path()?;
     let raw = fs::read_to_string(&path).ok()?;
     let saved: SavedReport<Report> = match serde_json::from_str(&raw) {
@@ -119,7 +126,8 @@ pub fn read(scope: &MachineScope) -> Option<Report> {
             return None;
         }
     };
-    if saved.desktop_tool != crate::PANEL_TOOL {
+    let saved_agents = saved.enabled_agents.or_else(|| saved.desktop_tool.map(|tool| vec![tool]));
+    if !saved_agents.is_some_and(|ids| ids.iter().map(String::as_str).eq(agents.iter().copied())) {
         return None;
     }
     if let Err(reason) = accept(&saved.report, scope, now_ms(), &today_key()) {

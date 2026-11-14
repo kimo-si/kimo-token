@@ -117,7 +117,9 @@ pub fn pass(
     // the heartbeat too; between heartbeats the fields carry a note instead.
     let dsh_regressions: Vec<String> = Vec::new();
     let mut dsh_sessions: Vec<_> = Vec::new();
-    let dsh_due = heartbeat_due;
+    // 诊断回读同样遵守启用列表，避免后台扫描已关闭工具的原始文件。
+    let dsh_enabled = roots.contains_key("dsh");
+    let dsh_due = heartbeat_due && dsh_enabled;
     if dsh_due {
     let dsh_rows = index.tool_events("dsh").unwrap_or_default();
     let sums = sum_rows(&dsh_rows);
@@ -180,7 +182,7 @@ pub fn pass(
     }
 
     }
-    if !dsh_due {
+    if dsh_enabled && !dsh_due {
         dsh_sessions.push(json!({ "note": "dsh reconciliation runs hourly; next heartbeat" }));
     }
     // The codex replay audit rides the heartbeat line only: re-parsing every
@@ -190,7 +192,7 @@ pub fn pass(
     // (the clock is in-memory), and blocking the boot publish on a full replay
     // was the "二十多秒才启动完" the panel shipped with.
     let mut codex_audit: serde_json::Value = serde_json::Value::Null;
-    if heartbeat_due && reason != "initial scan" {
+    if heartbeat_due && reason != "initial scan" && roots.contains_key(crate::PANEL_TOOL) {
         let replay = usage_adapter_codex::replay(&usage_core::DateFilter::default());
         let mut indexed: BTreeMap<String, (f64, f64, f64, f64, usize)> = BTreeMap::new();
         for row in index.tool_session_totals("codex").unwrap_or_default() {

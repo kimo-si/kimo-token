@@ -39,6 +39,13 @@ Current interface captured on 2026-11-14 using built-in demo data.
   <img alt="kimo-token panel — Analysis tab, dark" src="docs/screenshots/panel-en-tools-dark.png" width="24%">
 </p>
 
+In **Settings → Agents**, choose which of the 30 tools to track for usage and show quotas for. Codex is enabled by default.
+
+<p align="center">
+  <img alt="kimo-token settings — Agents tab, light" src="docs/screenshots/panel-en-agents.png" width="32%">
+  <img alt="kimo-token settings — Agents tab, dark" src="docs/screenshots/panel-en-agents-dark.png" width="32%">
+</p>
+
 ## Core features
 
 The panel opens with five pages, each one drilling deeper:

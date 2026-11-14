@@ -39,6 +39,13 @@ AI 编程工具的 token 用量、费用与订阅额度——菜单栏一屏看�
   <img alt="kimo-token 面板 — 分析页，深色" src="docs/screenshots/panel-zh-tools-dark.png" width="24%">
 </p>
 
+在 **设置 → Agent** 中，可单独开启或关闭 30 款工具的用量采集和配额显示。默认启用 Codex。
+
+<p align="center">
+  <img alt="kimo-token 设置 — Agent 标签页，浅色" src="docs/screenshots/panel-zh-agents.png" width="32%">
+  <img alt="kimo-token 设置 — Agent 标签页，深色" src="docs/screenshots/panel-zh-agents-dark.png" width="32%">
+</p>
+
 ## 核心功能
 
 菜单栏点开后分五页，一层层往下钻：
