@@ -14,7 +14,7 @@ from pathlib import Path
 
 from PIL import Image
 
-PETS = Path(__file__).resolve().parent.parent / "apps/tokenme-bar/src/assets/pets"
+PETS = Path(__file__).resolve().parent.parent / "apps/kimo-token-bar/src/assets/pets"
 SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 

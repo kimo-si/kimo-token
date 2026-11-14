@@ -47,7 +47,7 @@ use crate::http::get_json;
 use crate::QuotaProbe;
 
 const API_URL: &str = "https://codely.tuanjie.cn/api/user/usage/summary";
-const USER_AGENT: &str = concat!("tokenme/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("kimo-token/", env!("CARGO_PKG_VERSION"));
 
 /// `(wire window_type, the label the product prints, window minutes)`.
 const WINDOWS: &[(&str, &str, i64)] = &[
@@ -107,7 +107,7 @@ fn encode(value: &str) -> String {
     out
 }
 
-/// The CLI home, with tokenme's test/relocation override.
+/// The CLI home, with kimo-token's test/relocation override.
 fn cli_home() -> Option<PathBuf> {
     if let Ok(value) = std::env::var("CODELY_CLI_HOME") {
         let trimmed = value.trim();
@@ -216,7 +216,7 @@ pub(crate) fn samples_from(body: &Value) -> Vec<QuotaSample> {
             .find(|(wire, _, _)| *wire == kind)
             .map(|(_, label, minutes)| (*label, *minutes))
         else {
-            // A window the product does not draw is not a row tokenme invents.
+            // A window the product does not draw is not a row kimo-token invents.
             continue;
         };
         let quota = number(window.get("quota_points")).unwrap_or(0.0);

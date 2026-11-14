@@ -129,7 +129,7 @@ pub enum QuotaOrigin {
     Log,
     /// Polled live from the tool (vendor API, its CLI, or its local credential).
     Probe,
-    /// A cap the user set in tokenme, measured against our own cost — the only
+    /// A cap the user set in kimo-token, measured against our own cost — the only
     /// honest answer for tools whose vendor publishes no limit (Cline, ZCode).
     Budget,
 }
@@ -324,7 +324,7 @@ pub struct Report {
     pub all_time: Summary,
 }
 
-/// What one `tokenme import` merged from one origin, as written to the index's
+/// What one `kimo-token import` merged from one origin, as written to the index's
 /// `meta` table (`sync:linux:<origin>`) in the same transaction as the merge —
 /// so a record can never describe a batch that was rolled back. The panel
 /// renders it as the "多端同步" badge; `imported_at_ms` is what tells a
@@ -349,7 +349,7 @@ pub struct ReportOptions<'a> {
     pub recent_session_limit: usize,
     /// Quota read from the tools just now, via `SourceAdapter::quota`.
     pub polled_quota: Vec<QuotaView>,
-    /// Spend caps set in tokenme, keyed by tool id. They become quota bars too,
+    /// Spend caps set in kimo-token, keyed by tool id. They become quota bars too,
     /// measured against the cost this same report computes.
     pub budgets: BTreeMap<String, Budget>,
     /// Which machines to fold. [`summarize_facts`] honors it, including for
@@ -1259,7 +1259,7 @@ pub struct RollupRow {
     /// keeps the row in every raw-ts aggregate.
     pub day: String,
     /// The machine these rows came from: `""` for this machine's own files,
-    /// the bundle origin for rows merged by `tokenme import`. What
+    /// the bundle origin for rows merged by `kimo-token import`. What
     /// [`MachineScope`] filters on.
     pub origin: String,
     pub tool: String,

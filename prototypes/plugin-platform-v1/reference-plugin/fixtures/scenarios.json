@@ -1,5 +1,5 @@
 {
-  "schema": "tokenme.reference-scenarios/0.1",
+  "schema": "kimo-token.reference-scenarios/0.1",
   "cases": [
     {"id": "replay", "task": "collect-usage", "fixture": "fixtures/happy.json", "repeat": 2, "exitCode": 0,
       "assertions": {"/status": "ok", "/summary/observed_tokens": 550, "/summary/occurrences": 2, "/summary/duplicates": 2, "/summary/by_model": {"model-a": 200, "model-b": 350}, "/results/0/next_cursor": "2"}},

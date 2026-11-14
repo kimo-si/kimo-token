@@ -7,7 +7,7 @@
 //! so both roots are read and the record signature is what keeps a migrated
 //! session from being billed twice.
 //!
-//! `KIMI_DATA_DIR` is tokenme's own override, following `OPENCODE_DATA_DIR`:
+//! `KIMI_DATA_DIR` is kimo-token's own override, following `OPENCODE_DATA_DIR`:
 //! a test or a relocated install is the only thing that sets it.
 //!
 //! The desktop client is the third host: `Kimi.app` provisions a whole kimi-code
@@ -22,7 +22,7 @@ use std::sync::Mutex;
 
 /// The vendor's variable; a single directory.
 pub(crate) const ENV_CODE_HOME: &str = "KIMI_CODE_HOME";
-/// tokenme's override, so a fixture can pin the root without pretending the
+/// kimo-token's override, so a fixture can pin the root without pretending the
 /// product is installed. Comma-separated, like the other roots in this crate.
 pub(crate) const ENV_DATA_DIR: &str = "KIMI_DATA_DIR";
 /// Keeps the environment-touching tests off each other's variables. Nothing in

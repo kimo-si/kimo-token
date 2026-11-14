@@ -1,0 +1,793 @@
+/**
+ * The wire contract with `usage_core::Report`.
+ *
+ * Field names are verbatim serde output (snake_case, no `rename_all` on the
+ * structs), so this file is the single place the UI is allowed to assume
+ * anything about Rust. `fixture.ts` produces the same shape.
+ */
+
+import type petSkinManifest from "./assets/pets/pet-skins.json";
+
+/** `usage_core::TokenCounts` — the four Anthropic-style stages plus reasoning/credits. */
+export interface TokenCounts {
+  input: number;
+  cache_creation: number;
+  cache_read: number;
+  output: number;
+  reasoning: number;
+  credits: number;
+}
+
+export interface UnpricedModel {
+  tool: string;
+  model: string;
+  total_tokens: number;
+  requests: number;
+}
+
+export interface Summary {
+  counts: TokenCounts;
+  total_tokens: number;
+  cost: number;
+  credits: number;
+  /** Part of `cost` converted from credits at a published plan price: ">0" means
+      the total is partly an estimate, which is why the UI prefixes it with ≈. */
+  credit_cost: number;
+  requests: number;
+  sessions: number;
+  cached_pct: number;
+  unpriced: UnpricedModel[];
+}
+
+export interface Item {
+  key: string;
+  label: string;
+  counts: TokenCounts;
+  total_tokens: number;
+  cost: number;
+  requests: number;
+  sessions: number;
+  /** `false` ⇒ no price known: render "无价格", never "$0.00". */
+  priced: boolean;
+}
+
+export interface Breakdown {
+  tools: Item[];
+  models: Item[];
+  projects: Item[];
+  mcps: Item[];
+  skills: Item[];
+}
+
+export interface Window {
+  key: string;
+  label: string;
+  start_ms: number;
+  end_ms: number;
+  summary: Summary;
+  prev: Summary;
+  delta_cost_pct: number;
+  delta_tokens_pct: number;
+  breakdown: Breakdown;
+}
+
+export interface HeatCell {
+  /** `YYYY-MM-DD`, local. */
+  date: string;
+  total_tokens: number;
+  cost: number;
+  requests: number;
+}
+
+/** One local-hour bucket of today; the hour is the array index. */
+export interface HourCell {
+  total_tokens: number;
+  cost: number;
+  requests: number;
+}
+
+export interface QuotaView {
+  tool: string;
+  used_percent: number;
+  window_minutes: number;
+  resets_at_ms: number;
+  sampled_at_ms: number;
+  /** Bucket name when one tool reports several windows at once. */
+  label?: string | null;
+  /** Stable identity across polls, when the source has one. Labels carry live
+   *  numbers and implied lengths drift, so a saved ordering keys on this. */
+  id?: string | null;
+  /** `probe` = read live from the tool, `log` = embedded in its own records,
+   *  `budget` = a cap set in kimo-token and measured against our own cost. */
+  origin?: "log" | "probe" | "budget";
+  cycle?: {
+    observed_tokens: number;
+    estimated_tokens?: number | null;
+    estimated_used_percent?: number | null;
+    /** Burn-rate projection: at the recent pace, ms until the window total. */
+    eta_to_full_ms?: number | null;
+    previous_tokens?: number | null;
+    status: "collecting" | "partial" | "complete" | "unavailable" | "unverified";
+    period_start_ms: number;
+    period_end_ms: number;
+    models?: { model: string; tokens: number }[];
+  } | null;
+}
+
+/** The saved drag order of the quota section: tool ids for the groups,
+ *  `<tool>/<row id>` for the bars inside them. Absent entries keep the
+ *  report's own rank-stable order. */
+export interface QuotaOrder {
+  tools: string[];
+  rows: string[];
+}
+
+/** What the OS says about kimo-token's notification permission, plus `unknown`
+ *  where the platform has no answer (Windows). Mirrors the Rust vocabulary in
+ *  `notify::permission_state`. */
+export type NotifyState = "granted" | "denied" | "not_determined" | "unknown";
+
+export interface SourceStatus {
+  id: string;
+  display: string;
+  detected: boolean;
+  roots: string[];
+  hint: string | null;
+  events_ingested: number;
+}
+
+export type PricingSource = "models_dev" | "cache" | "bundled" | "unavailable";
+
+export interface PricingMeta {
+  source: PricingSource;
+  fetched_at_ms: number;
+  stale: boolean;
+  key_count: number;
+  cache_dir: string | null;
+}
+
+export interface SessionRow {
+  origin: string;
+  tool: string;
+  session: string;
+  project: string | null;
+  model: string;
+  first_ms: number;
+  last_ms: number;
+  total_tokens: number;
+  cost: number;
+  requests: number;
+}
+
+/** `usage_core::SyncRecord` — one bundle from another machine, merged into
+    this index. The newest import per origin wins in the badge; anything older
+    than 24h per origin makes the badge warn. */
+export interface SyncRecord {
+  origin: string;
+  imported_at_ms: number;
+  window_lo_ms: number;
+  window_hi_ms: number;
+  rows: number;
+  file: string;
+  sha256?: string;
+}
+
+/** Which machines a report's numbers cover. Mirrors Rust `MachineScope`
+    (`{"kind":"all"}` / `{"kind":"local"}` / `{"kind":"origin","name":"ops-box"}`). */
+export type MachineScope = { kind: "all" } | { kind: "local" } | { kind: "origin"; name: string };
+
+/* ── 远程服务器（拉取式采集） --------------------------------------------- */
+/* 与 `src-tauri/src/servers/` 的 serde 输出逐字对应；命令面见 Bridge。 */
+
+/** A classified backend failure (`SshError`): `kind` picks the title, `detail` is the raw text. */
+export interface SshError {
+  kind: string;
+  detail: string;
+}
+
+export type ServerStatus = "ok" | "warn" | "error" | "syncing" | "none";
+
+/** One completed pull attempt, newest last (capped server-side). */
+export interface ServerSyncEvent {
+  at_ms: number;
+  rows: number;
+  took_ms: number;
+  ok: boolean;
+}
+
+/** `ServerView` — the record plus live scheduling facts. Never carries a password. */
+export interface ServerView {
+  id: number;
+  name: string;
+  host: string;
+  port: number;
+  user: string;
+  fingerprint: string;
+  every_secs: number;
+  days: number;
+  enabled: boolean;
+  status: ServerStatus;
+  last_ok_ms: number | null;
+  last_error: SshError | null;
+  last_rows: number;
+  last_took_ms: number;
+  next_due_ms: number | null;
+  tools: string[];
+  history: ServerSyncEvent[];
+}
+
+/** `AuthReq` (tagged by `kind`). The password lives only in a wizard session. */
+export type ServerAuth =
+  | { kind: "password"; password: string }
+  | { kind: "key"; path: string; passphrase?: string | null }
+  | { kind: "default" };
+
+export interface ServerProbeReq {
+  name: string;
+  host: string;
+  port?: number;
+  user: string;
+  auth: ServerAuth;
+}
+
+export interface ServerProbeOutcome {
+  ok: boolean;
+  /** The wizard session that install must present; null on failure. */
+  session: number | null;
+  fingerprint: string | null;
+  /** What `servers.json` already pins for this host:port. */
+  known_fingerprint: string | null;
+  /** Presented key differs from the pin — the UI must ask for explicit re-confirmation. */
+  mismatch: boolean;
+  arch: string | null;
+  hostname: string | null;
+  error: SshError | null;
+}
+
+/** Mirrors the Rust step keys in order: keygen…merge. */
+export type InstallStepState = "pending" | "active" | "done" | "warn" | "error";
+
+export interface InstallStep {
+  key: string;
+  state: InstallStepState;
+  detail: string | null;
+}
+
+export interface ServerInstallProgress {
+  session: number;
+  steps: InstallStep[];
+  done: boolean;
+  ok: boolean;
+  error: SshError | null;
+}
+
+export interface ServerInstallReq {
+  session: number;
+  every_secs: number;
+  days: number;
+  fingerprint: string;
+}
+
+export interface ServerInstallOutcome {
+  ok: boolean;
+  server: ServerView | null;
+  detected: string[];
+  rows: number;
+  /** The bundle is on disk but the engine had not published its merge yet. */
+  merge_pending: boolean;
+  error: SshError | null;
+}
+
+export interface ServerRemoveOutcome {
+  removed: boolean;
+  /** `true` cleanup ran ok; `false` it was wanted but failed; `null` not requested. */
+  cleaned: boolean | null;
+  cleanup_error: SshError | null;
+}
+
+export interface ServerUpdateReq {
+  id: number;
+  every_secs?: number;
+  days?: number;
+  enabled?: boolean;
+}
+
+/** One machine row of the scope switcher; `origin: ""` is this machine. */
+export interface MachineView {
+  origin: string;
+  today_tokens: number;
+}
+
+/** Strict device-sync registry state returned by the read-only Tauri bridge. */
+export type SyncDeviceRole = "primary" | "secondary";
+export type SyncDeviceStatus = "pending" | "paired" | "paused" | "revoked" | "reconcile_required";
+
+export type DiagnosticsScope = "diagnostics.read" | "sync.control";
+export type DiagnosticsAction = "status" | "configure" | "configure_lan_control" | "create_grant" | "revoke_grant" | "revoke_all";
+
+export interface DiagnosticsSessionView {
+  session_id: string;
+  target_device: string;
+  origin: string;
+  scopes: DiagnosticsScope[];
+  issued_at_ms: number;
+  expires_at_ms: number;
+}
+
+export interface DiagnosticsOperationView {
+  operation_id: string;
+  action: Exclude<DiagnosticsAction, "status">;
+  state: "running" | "completed" | "failed";
+  at_ms: number;
+  error_code?: string;
+}
+
+export interface DiagnosticsSnapshot {
+  enabled: boolean;
+  /** Independent LAN HTTP control gate; read-only MCP remains separate. */
+  lan_control_enabled: boolean;
+  lan_control_expires_at_ms: number | null;
+  sessions: DiagnosticsSessionView[];
+  retained_operations: number;
+  last_operation: DiagnosticsOperationView | null;
+}
+
+export interface DiagnosticsConfig {
+  schema: "tokenme-diagnostics-grant/v1";
+  endpoint: string;
+  server_name: string;
+  certificate_pin: string;
+  certificate_der_b64: string;
+  grant: {
+    grant_id: string;
+    target_device_id: string;
+    debugger_device_id: string;
+    debugger_origin: string;
+    scopes: DiagnosticsScope[];
+    issued_at_ms: number;
+    expires_at_ms: number;
+    signature: string;
+  };
+}
+
+export interface DiagnosticsResponse extends DiagnosticsSnapshot {
+  config?: DiagnosticsConfig;
+  error?: { code: string; message: string };
+}
+
+/** Standard HTTP MCP client entry generated by the running kimo-token service. */
+export interface McpClientConfig {
+  config_json: string;
+  endpoint: string | null;
+  ready: boolean;
+  reason: string | null;
+  expires_at_ms: number | null;
+  /** Whether the single credential currently carries control powers. */
+  control: boolean;
+}
+
+export type DiagnosticsManagementRequest =
+  | { action: "status" }
+  | { action: "configure"; enabled: boolean; ttl_ms?: number }
+  | { action: "configure_lan_control"; enabled: boolean }
+  | { action: "create_grant"; debugger_device_id: string; scopes: DiagnosticsScope[]; ttl_ms: number }
+  | { action: "revoke_grant"; grant_id: string }
+  | { action: "revoke_all" };
+
+export type SyncManagementRequest =
+  | { action: "status" }
+  | { action: "discover" }
+  | { action: "retry_connect" }
+  | { action: "start_primary"; bind?: string | null; advertise_host?: string | null; allow_lan: boolean }
+  | { action: "set_primary_data_sharing"; enabled: boolean }
+  | { action: "set_primary_auto_approve"; enabled: boolean }
+  | { action: "start_secondary" }
+  | { action: "stop" }
+  | { action: "switch_to_secondary" }
+  | { action: "unpair" }
+  | { action: "reset_secondary" }
+  | { action: "create_invite"; expires_at_ms?: number | null }
+  | { action: "pair"; invite: string; origin?: string | null; display_name?: string | null; os?: string | null }
+  | { action: "pair_discovered"; primary_id: string; endpoint: string; certificate_pin: string; origin?: string | null; display_name?: string | null; os?: string | null }
+  | { action: "approve"; request_id: string }
+  | { action: "reject"; request_id: string }
+  | { action: "pause"; device_id: string }
+  | { action: "resume"; device_id: string }
+  | { action: "revoke"; device_id: string };
+
+export interface SyncDeviceView {
+  device_id: string;
+  origin: string;
+  display_name: string;
+  os: string;
+  role: SyncDeviceRole;
+  status: SyncDeviceStatus;
+  data_epoch: number;
+  active_stream_id: string | null;
+  last_generation: number | null;
+  last_merged_at_ms: number | null;
+  snapshot_complete: boolean;
+  /** Live authenticated upload socket right now (primary's real-time view). */
+  live: boolean;
+}
+
+export interface SyncPairingRequestView {
+  request_id: string;
+  invite_id: string;
+  device_id: string;
+  origin: string;
+  display_name: string;
+  os: string;
+  status: string;
+}
+
+export interface DiscoveredPrimaryView {
+  service_name: string;
+  primary_id: string;
+  display_name: string;
+  endpoint: string;
+  certificate_pin: string;
+  identity_conflict: boolean;
+}
+
+export interface SyncDevicesSnapshot {
+  primary_id: string | null;
+  primary_display_name: string | null;
+  /** Secondary only: the primary's OS as advertised at pairing, for the
+   *  platform icon. `null` on pairings made before the field travelled. */
+  primary_os: string | null;
+  role: SyncDeviceRole | "unconfigured";
+  service_running: boolean;
+  /** Primary listener is being started in a background worker. */
+  primary_starting: boolean;
+  primary_data_sharing_enabled: boolean;
+  /** Primary only: pairing requests are approved on arrival while on. */
+  primary_auto_approve_enabled: boolean;
+  service_health: string | null;
+  endpoint: string | null;
+  certificate_pin: string | null;
+  stream_id: string | null;
+  data_epoch: number | null;
+  /** Secondary only: upload completion. `true` once the primary has stored
+   *  this device's rollup snapshot; anything else is the pre-ack wait (the
+   *  `false` spelling comes from a legacy cursor on upgraded secondaries). */
+  upload_complete: boolean | null;
+  /** Secondary only: primary-data downlink completion. `null` until the
+   *  primary shares its first page, `false` while the backfill runs. */
+  download_complete: boolean | null;
+  /** When each half last really finished (stamped by the applying
+   *  transaction), so a 完成 label can show its own age. */
+  upload_complete_at_ms: number | null;
+  download_complete_at_ms: number | null;
+  last_error: string | null;
+  discovery_error: string | null;
+  last_connected_at_ms: number | null;
+  operation_state: "idle" | "running" | "success" | "error" | "cancelled";
+  last_checked_at_ms: number | null;
+  invite_url: string | null;
+  invite_expires_at_ms: number | null;
+  pairing_pending: boolean;
+  discovered_primaries: DiscoveredPrimaryView[];
+  devices: SyncDeviceView[];
+  pairing_requests: SyncPairingRequestView[];
+  /** Secondary only: the heartbeat watchdog's real-time read of the
+   *  resident upload socket — instant, not poll-derived. */
+  primary_link_live: boolean;
+  /** Device stale→fresh transitions since panel start (session rebuilds). */
+  sessions_since_boot: number;
+  /** The presence window behind the online dot, for diagnostics. */
+  presence_window_ms: number;
+}
+
+export interface Report {
+  generated_at_ms: number;
+  utc_offset: string;
+  day: Window;
+  week: Window;
+  month: Window;
+  year: Window;
+  heatmap: HeatCell[];
+  /** Today by local hour, 24 slots. Older snapshots may omit it (empty). */
+  hourly: HourCell[];
+  /** Yesterday by local hour, 24 slots — the day chart's one-day swipe-back.
+      Older engines omit it (undefined) and the chart hides the swipe; a
+      present-but-zero day is honest data, not absence. */
+  hourly_prev?: HourCell[];
+  quarter_hourly: HourCell[];
+  quotas: QuotaView[];
+  /** True until the quota probes have run (boot publishes without them). */
+  quotas_pending?: boolean;
+  /** The engine published this last run and this run restored it from disk
+   *  before folding anything: same machine and scope, older than the moment. */
+  from_previous_run?: boolean;
+  sources: SourceStatus[];
+  pricing: PricingMeta;
+  recent_sessions: SessionRow[];
+  all_time: Summary;
+  /** The scope these numbers were folded under — echoed so a report that
+      arrives after a switch is identifiable. Absent on older snapshots. */
+  scope?: MachineScope;
+  /** Every machine in the index, unscoped: `""` (this machine) first, then
+      origins by name. Absent on older snapshots. */
+  machines?: MachineView[];
+  /** Machine-sync imports, newest first. Absent on snapshots taken before
+      this field existed (older engines), hence optional. */
+  syncs?: SyncRecord[];
+}
+
+export type PeriodKey = "day" | "week" | "month" | "year";
+
+/** The panel is five pages rather than one long scroll; see `App.tsx`. */
+export type PageKey = "overview" | "quota" | "analysis" | "speed";
+
+/** Tray label modes, mirrored from `kimo_token::TrayMode` (snake_case). */
+export type TrayMode =
+  | "tray_only"
+  | "tokens_only"
+  | "cost_only"
+  | "tray_tokens"
+  | "tray_cost"
+  | "tray_tokens_cost"
+  | "tray_quota";
+
+export interface TrayState {
+  label: string;
+  tooltip: string;
+  mode: TrayMode;
+}
+
+export interface CheckinResult {
+  ok: boolean;
+  message: string;
+}
+
+export interface CodexResetCredit {
+  granted_at_ms: number;
+  expires_at_ms: number | null;
+}
+
+export type CodexResetCredits =
+  | { status: "sign_in_required" | "unavailable"; cards: CodexResetCredit[] | null }
+  | { status: "ready"; cards: CodexResetCredit[] };
+
+export interface Bridge {
+  checkinNow: (tool: string) => Promise<CheckinResult>;
+  /** `window.__TAURI_INTERNALS__` present ⇒ real app; otherwise the dev fixture. */
+  live: boolean;
+  fetchReport: (force: boolean) => Promise<Report>;
+  fetchResetCredits: () => Promise<CodexResetCredits>;
+  loadCachedResetCredits: () => Promise<CodexResetCredit[] | null>;
+  refreshPricing: () => Promise<void>;
+  trayState: () => Promise<TrayState | null>;
+  setTrayMode: (mode: TrayMode) => Promise<TrayState | null>;
+  onReport: (handler: (report: Report) => void) => () => void;
+  onSyncDevicesChanged: (handler: () => void) => () => void;
+  /** A tray menu entry ("本周"/"今日") asks the panel to focus a period. */
+  onTrayPeriod: (handler: (period: PeriodKey) => void) => () => void;
+  /** Panel-visible sync state changed out-of-band; the handler re-reads status. */
+  onSyncUpdated: (handler: () => void) => () => void;
+  /** Switch the whole panel's machine scope; the engine re-folds and the next
+   *  published report echoes it in `Report.scope`. */
+  setReportScope: (scope: MachineScope) => Promise<void>;
+  /** Strict device-sync status and its management mutations share one IPC command. */
+  syncDevices: (request?: SyncManagementRequest) => Promise<SyncDevicesSnapshot>;
+  diagnosticsSession: (request: DiagnosticsManagementRequest) => Promise<DiagnosticsResponse>;
+  mcpClientConfig: () => Promise<McpClientConfig>;
+  /** `tool id → data:image/png;base64,…` for the tools that ship a macOS app. */
+  toolIcons: () => Promise<Record<string, string>>;
+  /** The saved drag order of the quota section (empty lists ⇒ report order). */
+  quotaOrder: () => Promise<QuotaOrder>;
+  setQuotaOrder: (order: QuotaOrder) => Promise<void>;
+  /** The notification permission as the OS reports it, for the quota section's
+   *  guide. `?notify=` pins it in the browser preview, same family as `?stale=`. */
+  notifyStatus: () => Promise<NotifyState>;
+  /** The guide's one button: raises the system prompt (undecided) or opens the
+   *  notification settings pane (denied). Returns the state it routed on. */
+  notifyEnable: () => Promise<NotifyState>;
+  /** Report the webview's detected UI language to the native chrome. */
+  setUiLang: (lang: string) => Promise<void>;
+  /** Cold-start telemetry, stage 1: the bundle ran and index.html's shell is up. */
+  reportBoot: () => Promise<void>;
+  /** Cold-start telemetry, stage 2: the page has figures. This is what retires the
+   *  native boot note, so it must not fire earlier than real content. */
+  reportContent: () => Promise<void>;
+  /** The settings sheet: autostart, fallback poll cadence, build version. */
+  panelSettings: () => Promise<PanelSettings>;
+  setAutostart: (on: boolean) => Promise<void>;
+  setRefreshSecs: (secs: number) => Promise<void>;
+  setTheme: (theme: ThemeKey) => Promise<void>;
+  setShowMoney: (on: boolean) => Promise<void>;
+  setQuotaDisplayMode: (mode: QuotaDisplayMode) => Promise<void>;
+  setShowCycleTokens: (on: boolean) => Promise<void>;
+  setPerformanceMonitoring: (on: boolean) => Promise<void>;
+  ttftSnapshot: () => Promise<TtftSnapshot>;
+  runActiveSpeedTest: (provider: ActiveSpeedTest["provider"]) => Promise<ActiveSpeedTest>;
+  setTtftEnabled: (on: boolean) => Promise<void>;
+  onTtftUpdated: (handler: (snapshot: TtftSnapshot) => void) => () => void;
+  setHideUnusedTools: (on: boolean) => Promise<void>;
+  setHideUnusedQuota: (on: boolean) => Promise<void>;
+  setHideUnusedEstimation: (on: boolean) => Promise<void>;
+  setBubbleEnabled: (on: boolean) => Promise<void>;
+  setBubbleSkin: (skin: BubbleSkin) => Promise<void>;
+  onBubbleSkin: (handler: (skin: BubbleSkin) => void) => () => void;
+  setPetPreferences: (prefs: import("./lib/petCompanion").PetPreferences) => Promise<void>;
+  onPetPreferences: (handler: (prefs: import("./lib/petCompanion").PetPreferences) => void) => () => void;
+  petActivity: () => Promise<import("./lib/petCompanion").PetActivity>;
+  showPetNotice: (kind: import("./lib/petCompanion").PetNoticeKind, minutes: number) => Promise<import("./lib/petCompanion").PetNotice | null>;
+  previewPetNotice: () => Promise<import("./lib/petCompanion").PetNotice | null>;
+  getPetNotice: () => Promise<import("./lib/petCompanion").PetNotice | null>;
+  onPetNotice: (handler: (notice: import("./lib/petCompanion").PetNotice | null) => void) => () => void;
+  petNoticeReady: (id: number) => Promise<void>;
+  respondPetNotice: (id: number, action: import("./lib/petCompanion").PetResponse["action"]) => Promise<void>;
+  onPetResponse: (handler: (response: import("./lib/petCompanion").PetResponse) => void) => () => void;
+  repositionPetNotice: () => Promise<void>;
+  setHostExitPause: (on: boolean) => Promise<void>;
+  /** On, the host-exit pause stops applying to the check-in tools, so their
+   *  daily claim fires and their rows stay live with the host app closed. */
+  setAutoCheckin: (on: boolean) => Promise<void>;
+  /** The master switch: off, the engine asks no vendor for anything. */
+  setQuotaPolling: (on: boolean) => Promise<void>;
+  /** One probe's own switch — the only lever with no host mapping. */
+  setToolPolling: (tool: string, on: boolean) => Promise<void>;
+  /** The registry's own list, with what this machine has answered. */
+  probeTools: () => Promise<ProbeTool[]>;
+  setNotifyTiers: (tiers: NotifyTierKey) => Promise<void>;
+  setPlanExpiryNotifyDays: (days: number | null) => Promise<void>;
+  setToolMuted: (tool: string, on: boolean) => Promise<void>;
+  frontendError: (message: string) => Promise<void>;
+  setNotifyDevicePresence: (on: boolean) => Promise<void>;
+  setNotifySyncStatus: (on: boolean) => Promise<void>;
+  setAutoUpdateCheck: (on: boolean) => Promise<void>;
+  checkUpdate: () => Promise<UpdateStatus>;
+  downloadUpdate: () => Promise<UpdateStatus>;
+  installUpdate: () => Promise<void>;
+  onUpdateProgress: (handler: (progress: DownloadProgress) => void) => () => void;
+  showPanel: () => Promise<void>;
+  hidePanel: () => Promise<void>;
+  /** Windows only: a text field can only receive keys while the window owns
+   *  the keyboard, and the non-activating tray panel never does. No-op in the
+   *  browser fixture and on macOS. */
+  setKeyboardMode: (on: boolean) => Promise<void>;
+  /** Hands the press to the Rust drag loop; the native move loop cannot move a
+   *  non-activating window. Resolves immediately; the drag runs in Rust. */
+  beginBubbleDrag: () => Promise<void>;
+  quit: () => Promise<void>;
+  /** Release page / mailto — the Rust side whitelists http(s) and mailto only. */
+  openExternal: (url: string) => Promise<void>;
+  /** Reveal the diagnostic log directory in the file manager. */
+  openLogDir: () => Promise<void>;
+  /** Configured remote servers with live scheduling facts (empty most of the time). */
+  servers: () => Promise<ServerView[]>;
+  /** The dedicated key pair's public half; generates on first call. */
+  serverPublicKey: () => Promise<{ path: string; line: string }>;
+  serverProbe: (req: ServerProbeReq) => Promise<ServerProbeOutcome>;
+  serverInstall: (req: ServerInstallReq) => Promise<ServerInstallOutcome>;
+  /** Drop a wizard session (zeroizes its password); safe to call twice. */
+  serverAbortSession: (session: number) => Promise<void>;
+  serverSyncNow: (id: number) => Promise<void>;
+  serverUpdate: (req: ServerUpdateReq) => Promise<ServerView[]>;
+  serverRemove: (id: number, cleanupRemote: boolean) => Promise<ServerRemoveOutcome>;
+  forgetImportedOrigin: (origin: string) => Promise<number>;
+  onServersUpdated: (handler: (servers: ServerView[]) => void) => () => void;
+  onInstallProgress: (handler: (progress: ServerInstallProgress) => void) => () => void;
+}
+
+/** `system` defers to the OS media query; `light`/`dark` pin the panel. */
+export const PANEL_THEME_KEYS = ["dark", "light", "cobalt", "violet", "amber", "rose", "charcoal", "system"] as const;
+export type ThemeKey = typeof PANEL_THEME_KEYS[number];
+
+// Raster skins are declared by the pet manifest. Adding a skin package updates
+// this union from JSON instead of requiring another CSS/TypeScript switch.
+export type BubbleSkin = "waterdrop" | keyof typeof petSkinManifest.skins;
+
+/** Which banner lines fire: both lines, only exhaustion, or nothing at all. */
+export type NotifyTierKey = "both" | "exhausted" | "off";
+
+export type QuotaDisplayMode = "used" | "remaining";
+
+export interface TtftSample {
+  provider: "codex" | "claude_code" | "dsh";
+  granularity: "turn" | "request";
+  metric: "ttft" | "first_content";
+  ttft_ms: number;
+  sampled_at_ms: number;
+  model: string | null;
+  /** Output tokens per generation second, when the source could name the
+      window; samples from before the field existed omit it. */
+  tps?: number | null;
+  /** DSH-only inputs for output-weighted TPS aggregation. */
+  output_tokens?: number | null;
+  decode_ms?: number | null;
+  session_id?: string | null;
+}
+
+export interface TtftSnapshot {
+  revision: number;
+  enabled: boolean;
+  claude_receiver: string;
+  claude_config_status: string;
+  samples: TtftSample[];
+  /** Whether each collector's IDE is open right now; absent on older
+      engines — the page then shows every row. */
+  hosts?: { codex: boolean; claude_code: boolean; dsh?: boolean };
+}
+
+/** A user-triggered one-shot probe. Kept separate from passive samples. */
+export interface ActiveSpeedTest {
+  provider: "codex" | "claude_code";
+  model: string | null;
+  ttftMs: number;
+  tps: number | null;
+  outputTokens: number | null;
+  durationMs: number | null;
+  sampledAtMs: number;
+  measurement: "codex_stream" | "claude_otel";
+}
+
+export interface PanelSettings {
+  tray_mode: TrayMode;
+  autostart: boolean;
+  refresh_secs: number;
+  theme: ThemeKey;
+  show_money: boolean;
+  quota_display_mode: QuotaDisplayMode;
+  show_cycle_tokens: boolean;
+  ttft_enabled: boolean;
+  performance_monitoring: boolean;
+  hide_unused_tools: boolean;
+  hide_unused_quota: boolean;
+  hide_unused_estimation: boolean;
+  bubble_enabled: boolean;
+  bubble_skin: BubbleSkin;
+  pet_companion: import("./lib/petCompanion").PetPreferences;
+  host_exit_pause: boolean;
+  /** The check-in guarantee: on, Trae CN / Qoder keep being probed — and
+   *  claimed — while their host app is closed. */
+  auto_checkin: boolean;
+  /** The master switch: off, not one vendor request leaves the process. */
+  quota_polling: boolean;
+  /** Tools the user stopped by hand — the only lever for probes with no host. */
+  quota_probes_off: string[];
+  notify_tiers: NotifyTierKey;
+  /** Banners when a paired device crosses the presence window. */
+  notify_device_presence: boolean;
+  /** Banners when the sync link reports a fresh error or recovers. */
+  notify_sync_status: boolean;
+  /** Tools whose windows never post a banner. */
+  notify_muted: string[];
+  /** One reminder lead time for expiring vendor packages, or null to disable. */
+  plan_expiry_notify_days: number | null;
+  auto_update_check: boolean;
+  version: string;
+  /** The build number the panel logs at startup — the same digits a support
+   *  reply asks for, shown where the user can copy it. */
+  build: string;
+}
+
+/** One row of the 逐工具探测 list: what the registry actually holds, not a
+ *  hand-written list. `answered_here` is the "本机答过" judge the settings
+ *  sub-page filters on — `detected` is true for every source on a full machine,
+ *  so it cannot separate anything. Names come from the report's own
+ *  `sources[].display`, falling back to `toolDisplay` for the probes with no
+ *  adapter (copilot, gemini). */
+export interface ProbeTool {
+  id: string;
+  /** Whether `host_exit_pause` can reach this probe at all. */
+  host_gated: boolean;
+  answered_here: boolean;
+  /** What the composed gate says right now: master switch ∧ not excluded. */
+  polling: boolean;
+}
+
+export interface UpdateStatus {
+  phase: string;
+  message: string;
+  version: string | null;
+}
+
+/** Streamed while the update artifact downloads: `下载中 {percent}%`. */
+export interface DownloadProgress {
+  percent: number;
+  downloaded: number;
+  total: number;
+}

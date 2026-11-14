@@ -7,7 +7,7 @@
 //! manifest) and aggregate per session. If the indexer double-counted — a
 //! cursor regression, a re-ingest that slipped past dedupe — the replay sums
 //! and the indexed sums diverge, and [`sessions`] hands both sides to
-//! `tokenme codex-doctor` / the scan log.
+//! `kimo-token codex-doctor` / the scan log.
 
 use std::collections::BTreeMap;
 

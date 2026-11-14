@@ -473,7 +473,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output",type=Path,required=True)
     args=parser.parse_args()
-    report={"schema":"tokenme.design-review/0.5","status":"running","run_id":uuid.uuid4().hex,"production_runtime_validated":False,"scope":"document_semantics_only"}
+    report={"schema":"kimo-token.design-review/0.5","status":"running","run_id":uuid.uuid4().hex,"production_runtime_validated":False,"scope":"document_semantics_only"}
     args.output.parent.mkdir(parents=True,exist_ok=True)
     args.output.write_text(json.dumps(report,sort_keys=True)+"\n",encoding="utf-8")
     result=unittest.TextTestRunner(verbosity=2,stream=sys.stdout).run(unittest.defaultTestLoader.loadTestsFromTestCase(DesignContracts))

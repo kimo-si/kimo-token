@@ -21,7 +21,7 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(result.exception.code, code)
 
     def test_scaffold_package_checks_accept_its_new_identity(self):
-        with tempfile.TemporaryDirectory(prefix="tokenme-scaffold-") as directory:
+        with tempfile.TemporaryDirectory(prefix="kimo-token-scaffold-") as directory:
             destination = Path(directory) / "new-plugin"
             kit.init_project(destination, "org.example.audit.new-ide")
             result = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tools/tests", "-p", "test_package.py"], cwd=destination, capture_output=True, text=True)
@@ -35,9 +35,9 @@ class AuditTests(unittest.TestCase):
         self.assert_code("PACKAGE.NONCANONICAL", lambda: kit.validate_package_bytes(buffer.getvalue()))
 
     def test_pack_requires_provenance_for_existing_component(self):
-        with tempfile.TemporaryDirectory(prefix="tokenme-build-") as directory:
+        with tempfile.TemporaryDirectory(prefix="kimo-token-build-") as directory:
             root = Path(directory)
-            module = root / "target/wasm32-wasip2/release/tokenme_reference_plugin.wasm"
+            module = root / "target/wasm32-wasip2/release/kimo_token_reference_plugin.wasm"
             module.parent.mkdir(parents=True)
             module.write_bytes(kit.COMPONENT_HEADER + b"stale-component")
             (root / "toolchain.json").write_bytes((kit.ROOT / "toolchain.json").read_bytes())
@@ -47,7 +47,7 @@ class AuditTests(unittest.TestCase):
                 self.assert_code("BUILD.PROVENANCE_REQUIRED", kit.pack)
 
     def test_failed_verification_does_not_leave_previous_pass_current(self):
-        with tempfile.TemporaryDirectory(prefix="tokenme-evidence-") as directory:
+        with tempfile.TemporaryDirectory(prefix="kimo-token-evidence-") as directory:
             root = Path(directory)
             (root / "artifacts").mkdir()
             latest = root / "artifacts/verification.json"
@@ -57,9 +57,9 @@ class AuditTests(unittest.TestCase):
             self.assertEqual(json.loads(latest.read_bytes())["status"], "failed")
 
     def test_install_does_not_follow_predictable_temporary_hardlink(self):
-        with tempfile.TemporaryDirectory(prefix="tokenme-install-") as directory:
+        with tempfile.TemporaryDirectory(prefix="kimo-token-install-") as directory:
             root = Path(directory)
-            package = root / "fixture.tokenme-plugin"
+            package = root / "fixture.kimo-token-plugin"
             files = example_files()
             package.write_bytes(kit.archive_bytes(files))
             manifest = kit.decoded(files["manifest.json"])
@@ -73,7 +73,7 @@ class AuditTests(unittest.TestCase):
             self.assertEqual(sentinel.read_bytes(), b"preserve-this-file")
 
     def test_active_pointer_must_match_packaged_identity(self):
-        with tempfile.TemporaryDirectory(prefix="tokenme-identity-") as directory:
+        with tempfile.TemporaryDirectory(prefix="kimo-token-identity-") as directory:
             root = Path(directory)
             shutil.copytree(kit.ROOT / "schema", root / "schema")
             files = example_files()
@@ -90,14 +90,14 @@ class AuditTests(unittest.TestCase):
                 self.assert_code("INSTALL.IDENTITY", lambda: kit.run_installed("org.example.audit.impersonated", "collect-usage"))
 
     def test_stale_sources_and_changed_module_cannot_be_relabelled(self):
-        with tempfile.TemporaryDirectory(prefix="tokenme-provenance-") as directory:
+        with tempfile.TemporaryDirectory(prefix="kimo-token-provenance-") as directory:
             root = Path(directory)
             with patch.object(kit, "ROOT", root), patch.object(kit, "source_fingerprint", return_value="b" * 64):
                 kit.host_path().parent.mkdir(parents=True)
                 kit.host_path().write_bytes(b"host")
                 kit.module_path().parent.mkdir(parents=True)
                 kit.module_path().write_bytes(kit.COMPONENT_HEADER)
-                receipt = {"schema":"tokenme.build-receipt/0.1", "status":"passed", "sourceTreeSha256":"a"*64, "hostSha256":kit.hashlib.sha256(b"host").hexdigest(), "moduleSha256":kit.hashlib.sha256(kit.COMPONENT_HEADER).hexdigest()}
+                receipt = {"schema":"kimo-token.build-receipt/0.1", "status":"passed", "sourceTreeSha256":"a"*64, "hostSha256":kit.hashlib.sha256(b"host").hexdigest(), "moduleSha256":kit.hashlib.sha256(kit.COMPONENT_HEADER).hexdigest()}
                 kit.atomic_json(root / "target/build-receipt.json", receipt)
                 self.assert_code("BUILD.STALE_SOURCE", lambda: kit.build_receipt(current_source=True))
                 receipt["sourceTreeSha256"] = "b" * 64
@@ -106,9 +106,9 @@ class AuditTests(unittest.TestCase):
                 self.assert_code("BUILD.MODULE_CHANGED", lambda: kit.build_receipt(current_source=True))
 
     def test_process_budget_allows_compilation_before_the_task_deadline(self):
-        with tempfile.TemporaryDirectory(prefix="tokenme-deadline-") as directory:
+        with tempfile.TemporaryDirectory(prefix="kimo-token-deadline-") as directory:
             root = Path(directory)
-            package = root / "fixture.tokenme-plugin"
+            package = root / "fixture.kimo-token-plugin"
             files = example_files()
             manifest = kit.decoded(files["manifest.json"])
             manifest["tasks"][0]["timeoutMs"] = 1700
@@ -137,7 +137,7 @@ class AuditTests(unittest.TestCase):
             self.assert_code("ICON.ACTIVE_CONTENT", lambda:kit.validate_manifest(manifest,changed))
 
     def test_malformed_manifest_fails_schema_before_dereferencing(self):
-        with tempfile.TemporaryDirectory(prefix="tokenme-manifest-") as directory:
+        with tempfile.TemporaryDirectory(prefix="kimo-token-manifest-") as directory:
             root = Path(directory)
             (root/"manifest.json").write_bytes(b'[]')
             self.assert_code("SCHEMA.INVALID", lambda:kit.project_files(root))
@@ -146,10 +146,10 @@ class AuditTests(unittest.TestCase):
         self.assert_code("JSON.NONFINITE", lambda:kit.decoded(b'{"count":1e999}'))
 
     def test_installer_lock_rejects_a_competing_activation(self):
-        with tempfile.TemporaryDirectory(prefix="tokenme-lock-") as directory:
+        with tempfile.TemporaryDirectory(prefix="kimo-token-lock-") as directory:
             root = Path(directory)
             files = example_files(); manifest = kit.decoded(files["manifest.json"])
-            package = root/"fixture.tokenme-plugin"; package.write_bytes(kit.archive_bytes(files))
+            package = root/"fixture.kimo-token-plugin"; package.write_bytes(kit.archive_bytes(files))
             with patch.object(kit,"SANDBOX",root/"sandbox"):
                 with kit.installation_lock(root/"sandbox/plugins"/manifest["id"]):
                     self.assert_code("INSTALL.BUSY", lambda:kit.install(package,allow_unsigned=True))

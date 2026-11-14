@@ -253,7 +253,7 @@ struct Stored {
 #[derive(Debug, Clone)]
 pub struct IngestOptions {
     /// Take the claim even while a live peer holds it. The manual path's escape
-    /// hatch: a wedged claim must not make `tokenme index --rebuild` useless.
+    /// hatch: a wedged claim must not make `kimo-token index --rebuild` useless.
     pub force: bool,
     /// How long to wait for a peer's lease to free before skipping the pass.
     pub claim_wait: Duration,
@@ -294,7 +294,7 @@ pub(crate) fn run_with_hints<'a>(
         // than racing its cursor, which would double-insert cursor-only sources.
         let per_tool = idx.per_tool_counts()?;
         idx.errors = vec![
-            "another tokenme process is ingesting this index; reported it as-is".into(),
+            "another kimo-token process is ingesting this index; reported it as-is".into(),
         ];
         return Ok(IngestReport {
             total_events: per_tool.values().sum(),
@@ -504,7 +504,7 @@ fn one_adapter(
             .collect();
         for queue in queues.clone() {
             let tx = tx.clone();
-            let _ = std::thread::Builder::new().name("tokenme-index-read".into()).spawn_scoped(
+            let _ = std::thread::Builder::new().name("kimo-token-index-read".into()).spawn_scoped(
                 s,
                 move || loop {
                     let Some(job) = pop(&queue) else { return };
@@ -1234,7 +1234,7 @@ mod claim_tests {
         assert_eq!(report.files_scanned, 0, "nothing was touched");
         assert_eq!(report.new_events, 0);
         assert!(
-            idx.errors().iter().any(|e| e.contains("another tokenme process")),
+            idx.errors().iter().any(|e| e.contains("another kimo-token process")),
             "the skip has to be explainable: {:?}",
             idx.errors()
         );

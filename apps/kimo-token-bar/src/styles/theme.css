@@ -1,0 +1,753 @@
+@import "tailwindcss";
+/* 按需加载实际使用的 HeroUI 组件，避免无关控件的样式进入桌面包。 */
+@import "@heroui/styles/base" layer(base);
+@import "@heroui/styles/themes/default";
+@import "@heroui/styles/components/button.css" layer(components);
+@import "@heroui/styles/components/card.css" layer(components);
+@import "@heroui/styles/components/chip.css" layer(components);
+@import "@heroui/styles/utilities";
+@import "@heroui/styles/variants";
+
+/* ==========================================================================
+   kimo-token · design tokens
+   Editorial, dense, quiet. One accent, a fixed 6-slot categorical ramp,
+   hairlines instead of cards, and tabular numerals everywhere a number appears.
+   ========================================================================== */
+
+.panel-skin-preview:is([data-skin="light"], [data-skin="system"]),
+:root {
+  color-scheme: light;
+
+  /* ground (the web preview's fake desktop) */
+  --ground: #eef1f6;
+  /* The opaque light and dark surfaces match the native window backing.
+     The old translucent glass needed a native backing of exactly the right
+     colour underneath it, and every disagreement between the two painters
+     read as a grey mask over the whole panel — opaque ends that bug class.
+     The native layer paint (panel::apply_window_background) carries the same
+     two colours so the rounded-corner seam stays invisible. */
+  --surface: #eef3f6;
+  /* kept for the overlays (the settings sheet, the switch knob) that used to
+     need an opaque twin; today it is the same flat surface */
+  --surface-solid: #ffffff;
+  --surface-2: rgba(30, 52, 84, 0.06);
+  --panel-card: #fbfdfe;
+  --panel-edge: #00DDB0;
+  --panel-glow: 9%;
+  --panel-action: #00DDB0;
+  --panel-action-ink: #04211D;
+  --panel-meter: #00DDB0;
+  --panel-card-shadow: 0 5px 16px rgba(44, 83, 101, 0.08);
+  /* the web preview's fake desktop */
+  --wallpaper:
+    radial-gradient(120% 90% at 18% 0%, #7fa4d4 0%, transparent 58%),
+    radial-gradient(130% 100% at 88% 100%, #a488cc 0%, transparent 55%),
+    linear-gradient(160deg, #b9c8dc, #98a8c0 55%, #b0a2c8);
+
+  /* text hierarchy carries meaning, colour does not — cool slate, not gray */
+  --ink: #132028;
+  --ink-2: #455468;
+  --ink-3: #66748a; /* 5:1 on the glass — safe at 11px */
+
+  /* lines & tracks (hairlines, no cards) */
+  --hair: rgba(24, 44, 72, 0.1);
+  --hair-2: rgba(24, 44, 72, 0.17);
+  --track: rgba(24, 44, 72, 0.09);
+  --fill-hover: rgba(24, 44, 72, 0.05);
+  --fill-active: rgba(24, 44, 72, 0.1);
+
+  /* 青绿统一交互、图表和安全状态。 */
+  --accent: #00DDB0;
+  --accent-2: #00D9E8;
+  --accent-ink: #007F6B;
+  --accent-soft: rgba(0, 221, 176, 0.13);
+  --on-accent: #04211D;
+  /* bars are quiet: the categorical dots carry the colour, the fills do not */
+  --bar-fill: #00DDB0;
+  --bar-fill-hot: #F472B6;
+  /* the light-catching top edge of the glass */
+  --edge-hi: rgba(255, 255, 255, 0.85);
+
+  /* fixed categorical ramp: a tool keeps its slot regardless of ranking */
+  --cat-1: #00DDB0;
+  --cat-2: #3d5a9e;
+  --cat-3: #8a6a15;
+  --cat-4: #8a4a78;
+  --cat-5: #4c7a3a;
+  --cat-6: #5a5f6b;
+  --cat-7: #a2542f;
+  --cat-8: #6d7a2f;
+  --cat-9: #2f6f9e;
+  --cat-10: #9e3f6f;
+  --cat-11: #6a4a9e;
+  --cat-12: #7a2f2f;
+  --cat-13: #2f7a4f;
+  --cat-14: #6f5f3f;
+  --cat-15: #155f7a;
+  --cat-16: #7a4a2f;
+  --cat-17: #4f5f2f;
+  /* dsh 的品牌蓝；cat-15 起，主题色板必须长过 TOOL_ORDER */
+  --cat-18: #4a5fb0;
+  /* dsh 的品牌蓝（槽位因 funide 插入顺移）；cat-20 = joycode */
+  --cat-19: #4a5fb0;
+  --cat-20: #8f6fd0;
+  /* 冷色主题下的工具区分色 */
+  --cat-21: #60a5fa;
+  --cat-22: #b35574;
+  --cat-23: #3d7a8a;
+  --cat-24: #7a5a3d;
+  --cat-25: #2f5fa0;
+  /* omp（金色，补齐此前欠下的槽位）与 Antigravity IDE（桌面同族的灰橄榄） */
+  --cat-26: #9a7a2f;
+  --cat-27: #4a6d5f;
+  /* codely（含团结 Cowork 桌面版，共用 CLI 存储）的暖橄榄绿 */
+  --cat-28: #7a6a2f;
+  /* opendesign 的青绿；ramp 必须长于 TOOL_ORDER */
+  --cat-29: #93c5fd;
+
+  /* activity scale, quiet → saturated */
+  --heat-1: #dbeafe;
+  --heat-2: #93c5fd;
+  --heat-3: #60a5fa;
+  --heat-4: #00DDB0;
+  /* 今天使用青绿标记。 */
+  --today: #00DDB0;
+  /* modal scrim: dark veil on light; the dark theme flips to a light-gray
+     veil so the dark sheet keeps a visible edge against it */
+  --scrim: rgba(20, 20, 24, 0.18);
+
+  --warn: #F6D83B;
+  --warn-soft: rgba(246, 216, 59, 0.13);
+  /* 配额状态：青绿安全、黄色注意、红色告急。 */
+  --ok: #00DDB0;
+  --bad: #FF525A;
+  --bad-soft: rgba(255, 82, 90, 0.13);
+}
+
+/* Per-page accent: each tab gets its own quiet hue so the four pages read
+   as distinct rooms of the same house. The soft wash must be *declared* on
+   .panel, not :root — var() in a custom property is substituted where the
+   property is declared, so a :root declaration would bake in the default
+   accent before the per-page override ever applies. */
+:root {
+  --page-accent: var(--accent);
+}
+
+/* HeroUI 语义变量与现有主题共享同一套颜色来源。 */
+.panel {
+  --background: var(--surface);
+  --foreground: var(--ink);
+  --surface-foreground: var(--ink);
+  --surface-secondary: var(--panel-card);
+  --surface-tertiary: var(--surface-2);
+  --default: var(--surface-2);
+  --default-foreground: var(--ink-2);
+  --accent-foreground: var(--on-accent);
+  --success: var(--accent);
+  --warning: var(--warn);
+  --danger: var(--bad);
+  --accent-soft-foreground: var(--accent-ink);
+  --warning-soft: var(--warn-soft);
+  --warning-soft-foreground: var(--warn);
+  --danger-soft: var(--bad-soft);
+  --danger-soft-foreground: var(--bad);
+  --muted: var(--ink-3);
+  --border: var(--hair-2);
+  --separator: var(--hair);
+  --focus: var(--accent);
+  --radius: 0.875rem;
+  --cursor-interactive: pointer;
+  --page-accent-soft: color-mix(in srgb, var(--page-accent) 10%, transparent);
+}
+
+.panel[data-page="tools"] {
+  --page-accent: var(--accent);
+}
+
+.panel[data-page="ranks"] {
+  --page-accent: var(--accent);
+}
+
+.panel[data-page="detail"] {
+  --page-accent: var(--accent);
+}
+
+:root {
+
+  /* 超出配额阈值的警示尾段独立于状态图例配色。 */
+  --quota-tail-start: #F472B6;
+  --quota-tail-end: #FBBF24;
+
+  /* 8px rhythm */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 28px;
+
+  --r-sm: 3px;
+  --r-md: 5px;
+
+  --stack: -apple-system, "SF Pro Text", "Inter", system-ui, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  /* fingerprints, hosts and key paths: things copied by eye must not kern */
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --t-hero: 34px;
+  --t-title: 13px;
+  --t-body: 13px;
+  --t-meta: 11px;
+
+  --dur-fast: 160ms;
+  --dur-slow: 240ms;
+  --ease: cubic-bezier(0.22, 0.8, 0.32, 1);
+}
+
+/* Dark tokens apply two ways: the OS media query (unless the user pinned
+   浅色), or an explicit 深色 pin. Plain CSS has no "reuse that block", so the
+   token list appears twice, mechanically identical — keep them in sync. */
+@media (prefers-color-scheme: dark) {
+  .panel-skin-preview[data-skin="system"],
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #080F15;
+    --surface: #080F15;
+    --surface-solid: #0E1A23;
+    --surface-2: #1B2B38;
+    --panel-card: #0E1A23;
+    --panel-edge: #365564;
+    --panel-glow: 0%;
+    --panel-action: #00D7BA;
+    --panel-action-ink: #04211D;
+    --panel-meter: #00DDB0;
+    --panel-card-shadow: none;
+    --wallpaper: #050B10;
+
+    --ink: #F5F8FA;
+    --ink-2: #D2DFE8;
+    --ink-3: #9EB1BF; /* 5.2:1 on the glass */
+
+    --hair: rgba(118, 163, 187, 0.13);
+    --hair-2: rgba(118, 163, 187, 0.25);
+    --track: #283D4D;
+    --fill-hover: rgba(118, 163, 187, 0.08);
+    --fill-active: rgba(118, 163, 187, 0.14);
+
+    --accent: #00DDB0;
+    --accent-2: #00D9E8;
+    --accent-ink: #00E3B1;
+    --accent-soft: rgba(0, 221, 176, 0.13);
+    --on-accent: #04211D;
+    --bar-fill: #00DDB0;
+    --bar-fill-hot: #FF525A;
+    --edge-hi: rgba(255, 255, 255, 0.09);
+
+    --cat-1: #00DDB0;
+    --cat-2: #8faee8;
+    --cat-3: #d9b24c;
+    --cat-4: #de9ac9;
+    --cat-5: #97cc7c;
+    --cat-6: #a2aab8;
+    --cat-7: #d98a5c;
+    --cat-8: #b5c25e;
+    --cat-9: #6fb0dd;
+    --cat-10: #e08fb5;
+    --cat-11: #a893e0;
+    --cat-12: #d97f7f;
+    --cat-13: #7fc79e;
+    --cat-14: #bfae7f;
+    --cat-15: #5cb8d9;
+    --cat-16: #d9a58f;
+    --cat-17: #a8c98f;
+    /* dsh 的品牌蓝（暗色提亮） */
+    --cat-18: #8f9ff0;
+    /* dsh 的品牌蓝（暗色提亮）；cat-20 = joycode */
+    --cat-19: #8f9ff0;
+    --cat-20: #b09ae0;
+    /* 冷色主题下的工具区分色 */
+    --cat-21: #60a5fa;
+    --cat-22: #e07a9a;
+    --cat-23: #5cd0e0;
+    --cat-24: #e0a070;
+    --cat-25: #70a0f0;
+  --cat-26: #d9b55e;
+  --cat-27: #79c2a8;
+  --cat-28: #e0c060;
+  --cat-29: #93c5fd;
+
+    --heat-1: #153A3A;
+    --heat-2: #17655A;
+    --heat-3: #0B9E80;
+    --heat-4: #00DDB0;
+    /* 今天使用青绿标记。 */
+    --today: #00DDB0;
+    /* light-gray veil: lifting the dimmed panel is what draws the sheet's edge */
+    --scrim: rgba(0, 6, 12, 0.5);
+
+    --warn: #F6D83B;
+    --warn-soft: rgba(246, 216, 59, 0.13);
+    --ok: #00DDB0;
+    --bad: #FF525A;
+    --bad-soft: rgba(255, 82, 90, 0.13);
+  }
+
+  :root:not([data-theme="light"]) .panel[data-page="tools"] {
+    --page-accent: var(--accent);
+  }
+
+  :root:not([data-theme="light"]) .panel[data-page="ranks"] {
+    --page-accent: var(--accent);
+  }
+
+  :root:not([data-theme="light"]) .panel[data-page="detail"] {
+    --page-accent: var(--accent);
+  }
+
+  /* dark needs a stronger wash than light for the same read */
+  :root:not([data-theme="light"]) .panel {
+    --page-accent-soft: color-mix(in srgb, var(--page-accent) 15%, transparent);
+  }
+}
+
+/* The explicit 深色 pin: same tokens, media query or not. CSS has no
+   "use that block" — duplication here is the price of one source of truth
+   per theme being readable side by side. Kept mechanically identical. */
+.panel-skin-preview[data-skin="dark"],
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #080F15;
+  --surface: #080F15;
+  --surface-solid: #0E1A23;
+  --surface-2: #1B2B38;
+  --panel-card: #0E1A23;
+  --panel-edge: #365564;
+  --panel-glow: 0%;
+  --panel-action: #00D7BA;
+  --panel-action-ink: #04211D;
+  --panel-meter: #00DDB0;
+  --panel-card-shadow: none;
+  --wallpaper: #050B10;
+
+  --ink: #F5F8FA;
+  --ink-2: #D2DFE8;
+  --ink-3: #9EB1BF;
+
+  --hair: rgba(118, 163, 187, 0.13);
+  --hair-2: rgba(118, 163, 187, 0.25);
+  --track: #283D4D;
+  --fill-hover: rgba(118, 163, 187, 0.08);
+  --fill-active: rgba(118, 163, 187, 0.14);
+
+  --accent: #00DDB0;
+  --accent-2: #00D9E8;
+  --accent-ink: #00E3B1;
+  --accent-soft: rgba(0, 221, 176, 0.13);
+  --on-accent: #04211D;
+  --bar-fill: #00DDB0;
+  --bar-fill-hot: #FF525A;
+  --edge-hi: rgba(255, 255, 255, 0.09);
+
+  --cat-1: #00DDB0;
+  --cat-2: #8faee8;
+  --cat-3: #d9b24c;
+  --cat-4: #de9ac9;
+  --cat-5: #97cc7c;
+  --cat-6: #a2aab8;
+  --cat-7: #d98a5c;
+  --cat-8: #b5c25e;
+  --cat-9: #6fb0dd;
+  --cat-10: #e08fb5;
+  --cat-11: #a893e0;
+  --cat-12: #d97f7f;
+  --cat-13: #7fc79e;
+  --cat-14: #bfae7f;
+  --cat-15: #5cb8d9;
+  --cat-16: #d9a58f;
+  --cat-17: #a8c98f;
+  --cat-18: #8f9ff0;
+  --cat-19: #8f9ff0;
+  --cat-20: #b09ae0;
+  /* 冷色主题下的工具区分色 */
+  --cat-21: #60a5fa;
+  --cat-22: #e07a9a;
+  --cat-23: #5cd0e0;
+  --cat-24: #e0a070;
+  --cat-25: #70a0f0;
+  --cat-26: #d9b55e;
+  --cat-27: #79c2a8;
+  --cat-28: #e0c060;
+  --cat-29: #93c5fd;
+
+  --heat-1: #153A3A;
+  --heat-2: #17655A;
+  --heat-3: #0B9E80;
+  --heat-4: #00DDB0;
+  /* 今天使用青绿标记。 */
+  --today: #00DDB0;
+  /* light-gray veil: lifting the dimmed panel is what draws the sheet's edge */
+  --scrim: rgba(0, 6, 12, 0.5);
+
+  --warn: #F6D83B;
+  --warn-soft: rgba(246, 216, 59, 0.13);
+  --ok: #00DDB0;
+  --bad: #FF525A;
+  --bad-soft: rgba(255, 82, 90, 0.13);
+}
+
+:root[data-theme="dark"] .panel[data-page="tools"] {
+  --page-accent: var(--accent);
+}
+
+:root[data-theme="dark"] .panel[data-page="ranks"] {
+  --page-accent: var(--accent);
+}
+
+:root[data-theme="dark"] .panel[data-page="detail"] {
+  --page-accent: var(--accent);
+}
+
+/* dark needs a stronger wash than light for the same read */
+:root[data-theme="dark"] .panel {
+  --page-accent-soft: color-mix(in srgb, var(--page-accent) 15%, transparent);
+}
+
+/* 面板与缩略图共享配色。扩展皮肤继承深色模式的警示色和排版。 */
+.panel-skin-preview[data-skin="cobalt"],
+:root[data-panel-skin="cobalt"] {
+  --surface: #0B1224;
+  --surface-solid: #121D35;
+  --surface-2: #1C2A48;
+  --panel-edge: #3A5490;
+  --track: #2B4063;
+  --ink: #F1F5FF;
+  --ink-2: #D7E3FF;
+  --ink-3: #A9BADB;
+  --accent: #83A6FF;
+  --accent-2: #62D1FE;
+  --on-accent: #09152D;
+}
+
+.panel-skin-preview[data-skin="violet"],
+:root[data-panel-skin="violet"] {
+  --surface: #151025;
+  --surface-solid: #211731;
+  --surface-2: #302144;
+  --panel-edge: #65487C;
+  --track: #463259;
+  --ink: #FAF3FF;
+  --ink-2: #EADAF5;
+  --ink-3: #C4AFD7;
+  --accent: #C6A1FF;
+  --accent-2: #F0A9DF;
+  --on-accent: #241036;
+}
+
+.panel-skin-preview[data-skin="amber"],
+:root[data-panel-skin="amber"] {
+  --surface: #1C130D;
+  --surface-solid: #2A1D14;
+  --surface-2: #39291D;
+  --panel-edge: #785032;
+  --track: #523924;
+  --ink: #FFF5E8;
+  --ink-2: #F0DFC8;
+  --ink-3: #CCB397;
+  --accent: #F5BF72;
+  --accent-2: #F49B79;
+  --on-accent: #281708;
+}
+
+.panel-skin-preview[data-skin="rose"],
+:root[data-panel-skin="rose"] {
+  --surface: #210F19;
+  --surface-solid: #2F1725;
+  --surface-2: #402032;
+  --panel-edge: #75405B;
+  --track: #542A40;
+  --ink: #FFF2F7;
+  --ink-2: #F4DCE9;
+  --ink-3: #D5AFC5;
+  --accent: #F7A1BE;
+  --accent-2: #D5ADFF;
+  --on-accent: #2C0E1D;
+}
+
+:root[data-panel-skin] {
+  --ground: var(--surface);
+  --wallpaper: var(--surface);
+  --panel-card: var(--surface-solid);
+  --panel-action: var(--accent);
+  --panel-action-ink: var(--on-accent);
+  --panel-meter: var(--accent);
+  --accent-ink: var(--accent);
+  --accent-soft: color-mix(in srgb, var(--accent) 15%, transparent);
+  --hair: color-mix(in srgb, var(--ink-3) 15%, transparent);
+  --hair-2: color-mix(in srgb, var(--ink-3) 28%, transparent);
+  --fill-hover: color-mix(in srgb, var(--ink-3) 9%, transparent);
+  --fill-active: color-mix(in srgb, var(--ink-3) 16%, transparent);
+  --bar-fill: var(--accent);
+  --cat-1: var(--accent);
+  --today: var(--accent);
+  --heat-1: color-mix(in srgb, var(--surface) 80%, var(--accent));
+  --heat-2: color-mix(in srgb, var(--surface) 60%, var(--accent));
+  --heat-3: color-mix(in srgb, var(--surface) 32%, var(--accent));
+  --heat-4: var(--accent);
+}
+
+/* 炭灰皮肤的卡片、分隔线和文字共用这组中性色。 */
+.panel-skin-preview[data-skin="charcoal"],
+:root[data-panel-skin="charcoal"] {
+  --surface: #1A1A1E;
+  --surface-solid: #24242B;
+  --surface-2: color-mix(in srgb, var(--surface-solid) 72%, var(--panel-edge));
+  --panel-edge: #363642;
+  --hair: var(--panel-edge);
+  --hair-2: var(--panel-edge);
+  --track: var(--panel-edge);
+  --ink: #F3F4F6;
+  --ink-2: #9CA3AF;
+  --ink-3: #9CA3AF;
+  --accent: #00DDB0;
+  --accent-2: #00D9E8;
+  --on-accent: #04211D;
+}
+
+/* ------------------------------------------------------------------- base */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* The real Tauri window supplies the surface through `.panel`. Keeping every
+   document layer transparent is required for the native rounded window region
+   to show the desktop at the four corners. The web preview restores its own
+   ground on `body[data-env="web"]` below. */
+html,
+#root {
+  background: transparent;
+}
+
+body {
+  margin: 0;
+  font-family: var(--stack);
+  font-size: var(--t-body);
+  line-height: 1.45;
+  color: var(--ink);
+  background: transparent;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  user-select: none;
+  cursor: default;
+  overflow: hidden;
+}
+
+/* In a browser there is no vibrancy behind the panel, so the preview sits on
+   a fake per-theme desktop. The panel itself is the same flat opaque surface
+   the real window shows — the backdrop-filter below is inert against it and
+   only mattered when the surface was translucent glass. */
+body[data-env="web"] {
+  background: var(--wallpaper);
+}
+
+body[data-env="web"] .panel {
+  --preview-panel-height: 760px;
+  backdrop-filter: blur(30px) saturate(1.6);
+  -webkit-backdrop-filter: blur(30px) saturate(1.6);
+  border: 1px solid var(--hair-2);
+  border-radius: 12px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.4), inset 0 1px 0 var(--edge-hi);
+  height: min(var(--preview-panel-height), 100vh);
+  margin: min(24px, max(0px, (100vh - var(--preview-panel-height)) / 2)) min(24px, max(0px, (100vw - 360px) / 2));
+}
+
+/* Every numeral is tabular: columns must not shimper when a report arrives. */
+.num,
+.hero-value,
+.hero-cost,
+.row-val,
+.row-cost,
+.mini-val,
+.mini-cost,
+.quota-pct,
+.stat-v,
+.heat-figure,
+.badge {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+:where(button:not(.button)) {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.ttft-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hair);
+}
+
+.ttft-heading,
+.ttft-title-group,
+.ttft-status {
+  display: flex;
+  align-items: center;
+}
+
+.ttft-heading {
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+
+.ttft-title-group {
+  gap: 6px;
+}
+
+.ttft-heading h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.ttft-status {
+  gap: 6px;
+  color: var(--ink-3);
+  font-size: 10px;
+}
+
+.ttft-state {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.ttft-state.is-on {
+  color: var(--accent-ink);
+}
+
+.ttft-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 11px;
+}
+
+.ttft-table th,
+.ttft-table td {
+  padding: 7px 5px;
+  border-bottom: 1px solid var(--hair);
+  vertical-align: top;
+}
+
+.ttft-table thead th {
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 550;
+}
+
+.ttft-table tbody th {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.ttft-name,
+.ttft-granularity,
+.ttft-meta,
+.ttft-time {
+  display: block;
+}
+
+.ttft-granularity,
+.ttft-meta,
+.ttft-time,
+.ttft-empty,
+.ttft-note {
+  color: var(--ink-3);
+  font-size: 10px;
+}
+
+.ttft-last {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.ttft-model {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ttft-note {
+  margin: 7px 0 0;
+  line-height: 1.45;
+}
+
+.ttft-about-button {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--ink-3);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-2);
+  font: 600 12px/1 sans-serif;
+  cursor: pointer;
+}
+
+.ttft-about-button:hover,
+.ttft-about-button:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.ttft-about-note {
+  margin: 8px 0;
+  padding: 9px 11px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.55;
+}

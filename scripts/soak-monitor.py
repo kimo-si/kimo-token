@@ -15,7 +15,7 @@ drifts:
 
 Run:  python3 scripts/soak-monitor.py [--every 60]
 Stop: Ctrl-C (writes soak-summary.json next to the JSONL).
-State lives in ~/Library/Logs/tokenme/soak/.
+State lives in ~/Library/Logs/dev.kimo-token.bar/soak/.
 """
 
 import json
@@ -26,10 +26,10 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-LOG = Path.home() / "Library/Logs/tokenme/panel.log"
-STATE_DB = Path.home() / "Library/Application Support/tokenme/sync_state.db"
-INDEX_DB = Path.home() / "Library/Application Support/tokenme/index.db"
-SOAK_DIR = Path.home() / "Library/Logs/tokenme/soak"
+LOG = Path.home() / "Library/Logs/dev.kimo-token.bar/panel.log"
+STATE_DB = Path.home() / "Library/Application Support/dev.kimo-token.bar/sync_state.db"
+INDEX_DB = Path.home() / "Library/Application Support/dev.kimo-token.bar/index.db"
+SOAK_DIR = Path.home() / "Library/Logs/dev.kimo-token.bar/soak"
 STALE_MIN = 15
 CHURN_GAP_S = 300
 

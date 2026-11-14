@@ -209,7 +209,7 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let version = format!("v{} · MIT License", env!("CARGO_PKG_VERSION"));
         let count = format!(">{} AI Tools<", builtin_adapters().len());
-        for name in ["assets/tokenme-hero-dark.svg", "assets/tokenme-hero-light.svg"] {
+        for name in ["assets/kimo-token-hero-dark.svg", "assets/kimo-token-hero-light.svg"] {
             let svg = std::fs::read_to_string(root.join(name))
                 .unwrap_or_else(|e| panic!("{name} must be readable: {e}"));
             assert!(
@@ -224,7 +224,7 @@ mod tests {
     }
 
     /// The version has four build-side homes, and `scripts/release.sh` writes only
-    /// three of them — `apps/tokenme-bar/package.json` is moved by hand (AGENTS.md
+    /// three of them — `apps/kimo-token-bar/package.json` is moved by hand (AGENTS.md
     /// says so), so drift is the default state rather than the accident.
     /// `latest.json` is the fifth home and deliberately not in this gate: it is a
     /// *published* manifest and lags honestly, which the next test polices instead.
@@ -248,7 +248,7 @@ mod tests {
             format!(
                 "{file} says version {found} but this crate compiled as {here} — the four \
                  version homes move together (scripts/release.sh bumps three; \
-                 apps/tokenme-bar/package.json is manual)"
+                 apps/kimo-token-bar/package.json is manual)"
             )
         };
 
@@ -269,11 +269,11 @@ mod tests {
             "{}",
             disagree("Cargo.toml [workspace.package]", &workspace_version)
         );
-        let panel_version = cargo_version("apps/tokenme-bar/src-tauri/Cargo.toml", "package");
+        let panel_version = cargo_version("apps/kimo-token-bar/src-tauri/Cargo.toml", "package");
         assert_eq!(
             here, panel_version,
             "{}",
-            disagree("apps/tokenme-bar/src-tauri/Cargo.toml [package]", &panel_version)
+            disagree("apps/kimo-token-bar/src-tauri/Cargo.toml [package]", &panel_version)
         );
 
         // The bundler stamps the installer filename from tauri.conf.json and the
@@ -281,8 +281,8 @@ mod tests {
         // one version field, wherever the config puts it (`"version"` at the top
         // level today, `package.version` is the other shape Tauri accepts).
         for rel in [
-            "apps/tokenme-bar/src-tauri/tauri.conf.json",
-            "apps/tokenme-bar/package.json",
+            "apps/kimo-token-bar/src-tauri/tauri.conf.json",
+            "apps/kimo-token-bar/package.json",
         ] {
             let text = read(rel);
             let found = json_string_fields(&text, "version");
@@ -326,7 +326,7 @@ mod tests {
     /// `latest.json` is the published release manifest, not a build input:
     /// `scripts/release.sh` rewrites it at tag time, `release.yml:247` attaches it as
     /// a release asset, and the panel GETs it at boot from
-    /// `raw.githubusercontent.com/Bencibr/tokenme/main/latest.json`
+    /// `raw.githubusercontent.com/kimo-si/kimo-token/main/latest.json`
     /// (`src/lib/about.ts:12` → `src/lib/update.ts:30` → `App.tsx:108`), reads its
     /// `version` and `url`, and puts that `url` behind the update chip
     /// (`components/StatusBar.tsx:79`). Rust's in-app updater does not read it at
@@ -380,8 +380,8 @@ mod tests {
 
         // The concrete asset this manifest promises: a `/releases/download/<tag>/…`
         // URL names the bytes it will hand over, and so does one whose last path
-        // segment is an installer (`TokenMe_0.1.5_x64-setup.exe`, or a
-        // `tokenme_0.1.5_aarch64.dmg`). A `releases/latest` pointer names nothing,
+        // segment is an installer (`kimo-token_0.1.5_x64-setup.exe`, or a
+        // `kimo-token_0.1.5_aarch64.dmg`). A `releases/latest` pointer names nothing,
         // and that is exactly what keeps a lagging manifest truthful.
         let hashes = json_string_fields(&text, "sha256");
         // Any hash the manifest does publish has to be one.

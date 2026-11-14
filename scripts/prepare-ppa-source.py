@@ -57,7 +57,7 @@ def main():
                     "__pycache__", ".debian-target", ".debian-cargo", "AGENTS.md"}
         if directory == source / "docs":
             excluded.add("internal")
-        if directory == source / "apps/tokenme-bar/src-tauri/resources":
+        if directory == source / "apps/kimo-token-bar/src-tauri/resources":
             excluded.update(("collector", "cli", "diagnostics"))
         return [name for name in names if name in excluded or name.endswith((".log", ".pyc"))
                 or (directory == source and name.startswith("."))]
@@ -65,7 +65,7 @@ def main():
     shutil.copytree(source, tree, ignore=ignored)
     run(["python3", "scripts/check-theme-parity.py"], tree)
     run(["python3", "scripts/check-i18n-parity.py"], tree)
-    panel = tree / "apps/tokenme-bar"
+    panel = tree / "apps/kimo-token-bar"
     run(["pnpm", "install", "--frozen-lockfile"], panel)
     run(["pnpm", "build"], panel)
     # Preserve licenses for packages used to produce the frontend, including
@@ -83,7 +83,7 @@ def main():
     if args.prepared_collectors:
         collectors.mkdir(parents=True)
         for arch in ("x86_64", "aarch64"):
-            origin = args.prepared_collectors.resolve() / f"tokenme-{arch}"
+            origin = args.prepared_collectors.resolve() / f"kimo-token-{arch}"
             if origin.read_bytes()[:4] != b"\x7fELF":
                 raise SystemExit(f"Collector is not ELF: {origin.name}")
             shutil.copy2(origin, collectors / origin.name)
@@ -94,7 +94,7 @@ def main():
     (tree / ".cargo").mkdir(exist_ok=True)
     with (tree / ".cargo/config.toml").open("w") as config:
         run(["cargo", "vendor", "--locked", "--versioned-dirs", "--respect-source-config",
-             "--sync", "apps/tokenme-bar/src-tauri/Cargo.toml", "vendor/rust"], tree, stdout=config)
+             "--sync", "apps/kimo-token-bar/src-tauri/Cargo.toml", "vendor/rust"], tree, stdout=config)
     dependencies = []
     for manifest in sorted((tree / "vendor/rust").glob("*/Cargo.toml")):
         package = tomllib.loads(manifest.read_text())["package"]
@@ -118,11 +118,11 @@ def main():
     shutil.copytree(tree / "packaging/ppa/debian", tree / "debian")
     (tree / "debian/rules").chmod(0o755)
     control = tree / "debian/control"
-    control.write_text(control.read_text().replace("TokenMe contributors <packaging@example.com>", args.maintainer))
+    control.write_text(control.read_text().replace("kimo-token contributors <packaging@example.com>", args.maintainer))
     date = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
     (tree / "debian/changelog").write_text(
-        f"token-me ({debversion}) {args.series}; urgency=medium\n\n"
-        f"  * Package TokenMe {upstream} for Ubuntu {suite_version}.\n\n"
+        f"kimo-token ({debversion}) {args.series}; urgency=medium\n\n"
+        f"  * Package kimo-token {upstream} for Ubuntu {suite_version}.\n\n"
         f" -- {args.maintainer}  {date}\n")
     run(["dpkg-buildpackage", "-S", "-sa", "-us", "-uc", "-d"], tree)
     print(f"Unsigned source upload prepared in {output}. Sign the .changes and .dsc before uploading.")

@@ -3,7 +3,7 @@ name = "usage-adapter-joycode"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "tokenme source adapter: joycode"
+description = "kimo-token source adapter: joycode"
 
 [dependencies]
 usage-core.workspace = true

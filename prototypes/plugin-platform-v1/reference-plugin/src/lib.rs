@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use tokenme_plugin_sdk_reference::{HostServices, QuotaWindow, TaskInput, TaskResult, UsageFact};
+use kimo_token_plugin_sdk_reference::{HostServices, QuotaWindow, TaskInput, TaskResult, UsageFact};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -35,16 +35,16 @@ mod component {
     wit_bindgen::generate!({ path: "../wit", world: "adapter" });
     struct AdapterPlugin;
     struct Services;
-    impl tokenme_plugin_sdk_reference::HostServices for Services {
-        fn now_ms(&mut self) -> u64 { tokenme::plugin::host::now_ms() }
+    impl kimo_token_plugin_sdk_reference::HostServices for Services {
+        fn now_ms(&mut self) -> u64 { kimo_token::plugin::host::now_ms() }
         fn http(&mut self, endpoint: &str) -> Result<(u16, String), String> {
-            tokenme::plugin::host::http(endpoint).map(|r| (r.status, r.body))
+            kimo_token::plugin::host::http(endpoint).map(|r| (r.status, r.body))
         }
         fn read_source(&mut self, source: &str, cursor: Option<String>) -> Result<String, String> {
-            tokenme::plugin::host::read_source(source, cursor.as_deref())
+            kimo_token::plugin::host::read_source(source, cursor.as_deref())
         }
         fn log(&mut self, event: &str, fields: serde_json::Value) -> Result<(), String> {
-            tokenme::plugin::host::log(event, &fields.to_string())
+            kimo_token::plugin::host::log(event, &fields.to_string())
         }
     }
     impl Guest for AdapterPlugin {

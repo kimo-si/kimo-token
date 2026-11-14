@@ -31,7 +31,7 @@ def main():
         {"id":"DA11","evidence":[evidence("IMPLEMENTATION_SPEC.md","| F11 代表性迁移 |"),evidence("PLAN.md","P4：全面迁移")],"input":{"representative_tools":["codex","qoder_cn"],"quota_only_examples":["copilot","gemini"]},"counterexample":{"full_remaining_provider_migration_owner":"not explicitly assigned in F01-F12"},"required_resolution":"F11.2 union inventory, strategies and F12 legacy-removal gate"},
         {"id":"DA12","evidence":[evidence("LANGUAGE_AND_SDK.md","| 注册/初始化/卸载 |"),evidence("PRODUCTION_CONTRACTS.md","清单沿用当前 camelCase")],"input":{"manifest_meta":"defaultConfig","business_config_key":"thresholds_remaining_percent","requested_guest_hook":"unload"},"counterexample":{"recursive_casing_would_corrupt_business_key":True,"wire_export_for_guest_unload":"not defined"},"required_resolution":"generated field mapping only; no undeclared guest lifecycle hook"},
     ]
-    output={"schema":"tokenme.document-counterexamples/0.5","evidence_class":"design_counterexamples_not_runtime_poc","production_runtime_validated":False,"cases":cases}
+    output={"schema":"kimo-token.document-counterexamples/0.5","evidence_class":"design_counterexamples_not_runtime_poc","production_runtime_validated":False,"cases":cases}
     args.output.parent.mkdir(parents=True,exist_ok=True)
     args.output.write_text(json.dumps(output,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
     print(json.dumps({"counterexamples":len(cases),"baseline_quotes_checked":True,"runtime_exploits_claimed":False}))

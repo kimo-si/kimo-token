@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """Gate: nothing personal reaches the public mirror.
 
-The public repo github.com/Bencibr/tokenme mirrors this repository's history
-from v0.1.6 on (docs/internal/PUBLIC_DELIVERY.md), so what the hand-built
-snapshot commit once guaranteed by construction — the tree is safe to publish
-— has to hold for every commit, messages included. This scans a revision
-range and fails on the mechanical version of those invariants:
+The public repository is github.com/kimo-si/kimo-token. This scans a
+revision range before publication, including commit messages:
 
   - identity paths: /Users/<account>, /home/<account> and C:\\Users\\<account>
     for any real account name. The names are derived, never hardcoded: the
@@ -22,8 +19,8 @@ range and fails on the mechanical version of those invariants:
   - credential shapes: openai/github/gitlab/aws/slack keys and PEM private
     keys, with a boundary so `task-<uuid>` never reads as an `sk-` key.
   - author identity: commit author/committer emails outside ALLOWED_EMAILS.
-    Every published snapshot carries agent@local; anything else is a
-    deliberate decision, not a default.
+    Legacy commits may carry agent@local; new contributions can use a
+    GitHub noreply address without exposing a personal mailbox.
   - internal paths: `AGENTS.md` at the root and everything under
     `docs/internal/`, plus the local agent tool state under `.bugx/`. These
     are working notes, never product: the switch deletes the paths from
@@ -37,7 +34,7 @@ Exit 0 clean / 1 findings.
 Scope: exactly what a push can carry — every commit under refs/heads and
 refs/tags. Local-only refs are deliberately out: Cline's checkpoints
 (refs/cline/*), remote-tracking refs, editor backups. Pass an explicit range
-for the steady-state scan instead, e.g. `github/main..HEAD` plus any tags.
+for the steady-state scan instead, e.g. `origin/main..HEAD` plus any tags.
 
 Usage: scripts/scan-public.py [--verbose] [<rev-range>]
 """
@@ -131,7 +128,7 @@ def drive_hits(text):
     for m in DRIVE_RE.finditer(text):
         root = m.group(2).lower()
         # Single-letter roots (C:\\w, C:/x) are invented placeholders; real
-        # machine layout names a directory (tokenme-tools, workspace, hermes).
+        # machine layout names a directory (kimo-token-tools, workspace, hermes).
         if len(root) < 2 or root in DRIVE_ROOTS_OK:
             continue
         # Compressed bytes occasionally spell `<letter>:/<two chars>`; a real

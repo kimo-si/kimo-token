@@ -1,0 +1,3768 @@
+//! The complete JS-facing surface; none of these commands computes a number.
+
+use std::collections::BTreeMap;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::net::UdpSocket;
+use std::path::PathBuf;
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
+
+use base64::Engine as _;
+use mdns_sd::{DaemonEvent, ServiceDaemon, ServiceEvent, ServiceInfo};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use tauri::{AppHandle, Emitter, Manager, State};
+use usage_core::pricing::PricingOptions;
+use usage_core::{origin_ok, MachineScope, PricingMap, PricingMeta, Report};
+use usage_device_sync::{hash_bytes, ClientTransportCancellation, DeviceIdentity, DeviceStatus, DeviceStatusView, DeviceSyncSnapshot, DiagnosticsError, DiagnosticsHost, HttpsServerConfig, PairingInvite, PairingInviteDetails, PairingRequest, PairingRequestState, PrimarySyncConfig, SecondarySyncConfig, SyncError, SyncRuntime, SyncRuntimeConfig, SyncStore, TransportError, Tls13HttpsTransport, HttpsTransportConfig};
+
+use crate::engine::{EngineChannel, Msg, Shared};
+use crate::{bubble, panel};
+use crate::settings::{BubbleSkin, NotifyTier, QuotaDisplayMode, Settings, Theme, TrayMode};
+use crate::tray;
+
+const DEFAULT_PRIMARY_BIND: &str = "0.0.0.0:47821";
+
+/// Process-wide device presence on the primary: device id → the instant of
+/// its last authenticated frame (the session heartbeat refreshes it every
+/// 3 s). "Online" is a freshness window, not a socket latch — the sync
+/// sessions rebuild routinely (idle churn, restarts, transport retries), and
+/// a latch turned every rebuild into a visible outage while the network was
+/// never broken.
+fn ws_live_seen() -> &'static std::sync::Mutex<std::collections::HashMap<String, i64>> {
+    static REGISTRY: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, i64>>> = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// How long a device counts as online after its last authenticated frame.
+/// Generous against one missed heartbeat window plus a reconnect with
+/// backoff; tight enough that a quit device goes red inside a poll or two.
+const DEVICE_LIVE_TTL_MS: i64 = 30_000;
+
+fn device_is_live(seen: Option<i64>, now_ms: i64) -> bool {
+    seen.is_some_and(|at| now_ms - at < DEVICE_LIVE_TTL_MS)
+}
+
+/// The two sync notification switches, mirrored from settings: seeded once
+/// per process from disk (a restart must respect a stored "off"), then kept
+/// current by the setters. Read on the poll path and from the ws hooks.
+static NOTIFY_DEVICE_PRESENCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static NOTIFY_SYNC_STATUS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static NOTIFY_TOGGLES_SEEDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn seed_notify_toggles_once() {
+    if !NOTIFY_TOGGLES_SEEDED.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        let settings = crate::settings::Settings::load();
+        NOTIFY_DEVICE_PRESENCE.store(settings.notify_device_presence, std::sync::atomic::Ordering::Release);
+        NOTIFY_SYNC_STATUS.store(settings.notify_sync_status, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Per-device presence at the previous poll: the first poll seeds silently,
+/// so a panel boot never replays the world as news. None until seeded.
+fn presence_edge_cache() -> &'static std::sync::Mutex<Option<std::collections::HashMap<String, bool>>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Option<std::collections::HashMap<String, bool>>>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+static SYNC_ERROR_EDGE_SEEDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SYNC_ERROR_EDGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Fires the presence and sync-health banners off the fresh view, on the
+/// poll cadence. Toggle-gated at the edge, never on the read: a switch
+/// turned on mid-episode stays quiet until the NEXT transition (the edge
+/// cache keeps its pre-toggle shape).
+fn notify_sync_transitions(view: &SyncDevicesView) {
+    use std::sync::atomic::Ordering;
+    seed_notify_toggles_once();
+    let paired: Vec<(String, bool)> = view.devices.iter()
+        .filter(|d| d.role == "secondary" && d.status == "paired")
+        .map(|d| (d.device_id.clone(), d.live))
+        .collect();
+    let mut cache = presence_edge_cache().lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(prev) = cache.as_ref() {
+        if NOTIFY_DEVICE_PRESENCE.load(Ordering::Acquire) {
+            for (id, live) in &paired {
+                if let Some(was) = prev.get(id).copied() {
+                    let name = view.devices.iter().find(|d| d.device_id == *id)
+                        .map(|d| d.display_name.trim().to_string())
+                        .unwrap_or_else(|| id.clone());
+                    let name = if name.is_empty() { id.clone() } else { name };
+                    if *live && !was { crate::notify::post_device_online(&name); }
+                    if !*live && was { crate::notify::post_device_offline(&name); }
+                }
+            }
+        }
+    }
+    *cache = Some(paired.into_iter().collect());
+    drop(cache);
+
+    let has_error = view.last_error.is_some();
+    if SYNC_ERROR_EDGE_SEEDED.load(Ordering::Acquire) && NOTIFY_SYNC_STATUS.load(Ordering::Acquire) {
+        let was = SYNC_ERROR_EDGE.load(Ordering::Acquire);
+        if has_error && !was { crate::notify::post_sync_error(); }
+        if !has_error && was { crate::notify::post_sync_recovered(); }
+    }
+    SYNC_ERROR_EDGE.store(has_error, Ordering::Release);
+    SYNC_ERROR_EDGE_SEEDED.store(true, Ordering::Release);
+}
+
+/// Device stale→fresh transitions since panel start: one per session rebuild
+/// that crossed the presence window, the soak metric in user-visible form.
+fn sessions_since_boot() -> &'static std::sync::atomic::AtomicU64 {
+    static COUNT: std::sync::OnceLock<std::sync::atomic::AtomicU64> = std::sync::OnceLock::new();
+    COUNT.get_or_init(|| std::sync::atomic::AtomicU64::new(0))
+}
+
+/// The secondary's view of the primary link: the instant of the last healthy
+/// heartbeat round-trip, refreshed every tick. Read through the same
+/// freshness window as device presence — the latch this replaces flagged an
+/// outage for the seconds a rebuilt session needs, every time it rebuilt.
+fn primary_link_seen() -> &'static std::sync::atomic::AtomicU64 {
+    static SEEN: std::sync::OnceLock<std::sync::atomic::AtomicU64> = std::sync::OnceLock::new();
+    SEEN.get_or_init(|| std::sync::atomic::AtomicU64::new(0))
+}
+
+fn primary_link_fresh() -> bool {
+    let seen = primary_link_seen().load(std::sync::atomic::Ordering::Acquire) as i64;
+    seen != 0 && device_is_live(Some(seen), current_ms())
+}
+const SYNC_RECOVERY_INTERVAL: Duration = Duration::from_secs(15);
+
+/// Terminates the tray application, rather than merely hiding its panel.
+#[tauri::command]
+pub fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+/// Mirrors the tray's live state so the panel can show what the bar shows.
+#[derive(Debug, Clone, Serialize)]
+pub struct TrayState {
+    pub label: String,
+    pub tooltip: String,
+    pub mode: TrayMode,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum SyncManagementRequest {
+    Status,
+    Discover,
+    RetryConnect,
+    StartPrimary { bind: Option<String>, advertise_host: Option<String>, allow_lan: bool },
+    SetPrimaryDataSharing { enabled: bool },
+    /// Auto-approve incoming pairing requests instead of queueing them for a
+    /// manual tap on the pending list.
+    SetPrimaryAutoApprove { enabled: bool },
+    StartSecondary,
+    Stop,
+    /// Clear a stopped primary role so this device can be paired as a
+    /// secondary while retaining local usage and sync history.
+    SwitchToSecondary,
+    Unpair,
+    /// Forget the secondary's stream checkpoints, outbox and ACK progress,
+    /// then recover a fresh stream and sync from scratch. Local events and the
+    /// pairing are kept.
+    ResetSecondary,
+    CreateInvite { expires_at_ms: Option<i64> },
+    Pair { invite: String, origin: Option<String>, display_name: Option<String>, os: Option<String> },
+    PairDiscovered { primary_id: String, endpoint: String, certificate_pin: String, origin: Option<String>, display_name: Option<String>, os: Option<String> },
+    Approve { request_id: String },
+    Reject { request_id: String },
+    ClearExpiredRequest { request_id: String },
+    Pause { device_id: String },
+    Resume { device_id: String },
+    Revoke { device_id: String },
+}
+
+/// Keep command diagnostics useful without ever serializing invite URLs,
+/// endpoints, device IDs, or other request payloads into the panel log.
+fn sync_action_name(request: Option<&SyncManagementRequest>) -> &'static str {
+    match request {
+        None => "snapshot",
+        Some(SyncManagementRequest::Status) => "status",
+        Some(SyncManagementRequest::Discover) => "discover",
+        Some(SyncManagementRequest::RetryConnect) => "retry_connect",
+        Some(SyncManagementRequest::StartPrimary { .. }) => "start_primary",
+        Some(SyncManagementRequest::SetPrimaryDataSharing { .. }) => "set_primary_data_sharing",
+        Some(SyncManagementRequest::SetPrimaryAutoApprove { .. }) => "set_primary_auto_approve",
+        Some(SyncManagementRequest::StartSecondary) => "start_secondary",
+        Some(SyncManagementRequest::Stop) => "stop",
+        Some(SyncManagementRequest::SwitchToSecondary) => "switch_to_secondary",
+        Some(SyncManagementRequest::Unpair) => "unpair",
+        Some(SyncManagementRequest::ResetSecondary) => "reset_secondary",
+        Some(SyncManagementRequest::CreateInvite { .. }) => "create_invite",
+        Some(SyncManagementRequest::Pair { .. }) => "pair",
+        Some(SyncManagementRequest::PairDiscovered { .. }) => "pair_discovered",
+        Some(SyncManagementRequest::Approve { .. }) => "approve",
+        Some(SyncManagementRequest::Reject { .. }) => "reject",
+        Some(SyncManagementRequest::ClearExpiredRequest { .. }) => "clear_expired_request",
+        Some(SyncManagementRequest::Pause { .. }) => "pause",
+        Some(SyncManagementRequest::Resume { .. }) => "resume",
+        Some(SyncManagementRequest::Revoke { .. }) => "revoke",
+    }
+}
+
+fn sync_error_code(error: &str) -> &'static str {
+    if error.contains("reconcile") { "reconcile_required" }
+    else if error.contains("primary download") { "primary_download" }
+    else if error.contains("DatabaseCorrupt") || error.contains("database") || error.contains("SQLite") { "database" }
+    else if error.contains("TLS handshake") || error.contains("pin mismatch") || error.contains("certificate") { "tls_or_pin" }
+    else if error.contains("connection refused") || error.contains("connection reset") || error.contains("no route") || error.contains("transport I/O") || error.contains("timed out") { "transport_unreachable" }
+    else if error.contains("pairing") || error.contains("not paired") || error.contains("revoked") { "pairing_state" }
+    else if error.contains("non-loopback listen address") { "lan_loopback_bind" }
+    else if error.contains("advertise host") { "lan_missing_advertise_host" }
+    else if error.contains("cannot start sync listener") { "listener_start" }
+    else if error.contains("mDNS") { "mdns" }
+    else if error.contains("certificate") { "certificate" }
+    else { "request_failed" }
+}
+
+fn log_sync_action(action: &str, started: Instant, error: Option<&str>) {
+    if action == "snapshot" || action == "status" {
+        if error.is_none() { return; }
+    }
+    let message = match error {
+        Some(error) => format!("sync: action={action} total_ms={} outcome=error error_code={}", started.elapsed().as_millis(), sync_error_code(error)),
+        None => format!("sync: action={action} total_ms={} outcome=ok", started.elapsed().as_millis()),
+    };
+    if error.is_some() { crate::logging::error(&message); } else { crate::logging::info(&message); }
+}
+
+// 串行保存共享设置，避免同时切换外观和皮肤时旧快照覆盖新值。
+async fn mutate_settings_async<F>(app: &AppHandle, mutate: F) -> Result<Settings, String>
+where
+    F: FnOnce(&mut Settings) + Send + 'static,
+{
+    let app = app.clone();
+    // 将锁和磁盘写入放在同一同步任务中，成功后才提交内存状态。
+    tauri::async_runtime::spawn_blocking(move || {
+        let shared = app.state::<Shared>();
+        let mut guard = shared.settings.lock().map_err(|_| "settings busy".to_string())?;
+        let mut settings = guard.clone();
+        mutate(&mut settings);
+        settings.save().map_err(|error| error.to_string())?;
+        *guard = settings.clone();
+        Ok(settings)
+    })
+    .await
+    .map_err(|error| format!("settings worker stopped: {error}"))?
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncControl {
+    state: Arc<Mutex<SyncControlState>>,
+    interrupt: Arc<SyncInterrupt>,
+}
+
+#[derive(Debug, Default)]
+struct SyncInterrupt {
+    stopping: AtomicBool,
+    transport: Mutex<Option<ClientTransportCancellation>>,
+}
+
+impl SyncInterrupt {
+    fn install(&self, transport: &Tls13HttpsTransport) {
+        if let Ok(mut slot) = self.transport.lock() {
+            let cancellation = transport.cancellation();
+            if self.stopping.load(Ordering::Acquire) { cancellation.cancel(); }
+            *slot = Some(cancellation);
+        }
+    }
+
+    fn stop(&self) {
+        self.stopping.store(true, Ordering::Release);
+        if let Ok(slot) = self.transport.lock() {
+            if let Some(cancellation) = slot.as_ref() { cancellation.cancel(); }
+        }
+    }
+}
+
+struct SyncRecoveryService {
+    stop: Arc<AtomicBool>,
+    join: Option<JoinHandle<()>>,
+}
+
+impl std::fmt::Debug for SyncRecoveryService {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("SyncRecoveryService").field("join", &self.join.is_some()).finish()
+    }
+}
+
+#[derive(Debug, Default)]
+struct SyncControlState {
+    role: String,
+    primary_id: Option<String>,
+    service: Option<SyncService>,
+    runtime: Option<SecondaryRuntimeService>,
+    endpoint: Option<String>,
+    certificate_pin: Option<String>,
+    invite_url: Option<String>,
+    invite_expires_at_ms: Option<i64>,
+    last_error: Option<String>,
+    discovery_error: Option<String>,
+    phase: SyncPhase,
+    primary_starting: bool,
+    last_checked_at_ms: Option<i64>,
+    discovered_primaries: Vec<DiscoveredPrimaryView>,
+    pending_pairing_attempted: bool,
+    discovery_in_flight: bool,
+    // True from the moment a pairing passes its pre-check until the worker's
+    // final locked section commits (or fails). The recovery tick checks it
+    // before re-arming the pending retry or resuming the pending file: the
+    // worker writes pending-pairing.json before its network send, so a
+    // resume in that window would re-send the same request concurrently.
+    pairing_worker_in_flight: bool,
+    recovery: Option<SyncRecoveryService>,
+    disconnect_delivery: Arc<Mutex<()>>,
+    // Stop-time disconnect writes the background task could not land (the
+    // usage index stayed locked or broken through its whole bounded retry).
+    // The recovery loop drains this at the top of each tick instead of the
+    // write being lost with only a log line.
+    pending_disconnect_writes: Arc<Mutex<Vec<PendingDisconnectWrite>>>,
+    interrupt: Arc<SyncInterrupt>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyncPhase { Idle, Running, Success, Error, Cancelled }
+
+impl Default for SyncPhase {
+    fn default() -> Self { Self::Idle }
+}
+
+impl SyncPhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Running => "running",
+            Self::Success => "success",
+            Self::Error => "error",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+struct SyncService {
+    stop: Arc<AtomicBool>,
+    join: Option<JoinHandle<Result<(), TransportError>>>,
+    certificate_der: Vec<u8>,
+    diagnostics: usage_device_sync::HttpsSyncServerHandle,
+    mdns: Option<MdnsAdvertisement>,
+}
+
+impl std::fmt::Debug for SyncService {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SyncService")
+            .field("join", &self.join.is_some())
+            .field("certificate_der_len", &self.certificate_der.len())
+            .field("mdns", &self.mdns)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A pairing request is persisted before the first network write.  If the
+/// process dies after the primary accepted it but before the secondary config
+/// was committed, the same signed request can be retried after restart.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PendingPairing {
+    request: PairingRequest,
+    primary_id: String,
+    #[serde(default)]
+    primary_display_name: Option<String>,
+    #[serde(default)]
+    primary_os: Option<String>,
+    endpoint: String,
+    server_name: String,
+    certificate_der: Vec<u8>,
+    certificate_pin: [u8; 32],
+    #[serde(default)]
+    identity_path: Option<PathBuf>,
+}
+
+/// A stop's disconnect write parked for the recovery loop: the captured
+/// binding plus the timestamp the notice would have carried.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct PendingDisconnectWrite {
+    config: SecondarySyncConfig,
+    queued_at_ms: i64,
+}
+
+const MDNS_SERVICE_TYPE: &str = "_tokenme-sync._tcp.local.";
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiscoveredPrimaryView {
+    pub service_name: String,
+    pub primary_id: String,
+    pub display_name: String,
+    pub endpoint: String,
+    pub certificate_pin: String,
+    pub identity_conflict: bool,
+}
+
+struct MdnsAdvertisement {
+    daemon: ServiceDaemon,
+    fullname: String,
+    monitor: Option<JoinHandle<()>>,
+    error: Arc<Mutex<Option<String>>>,
+}
+
+impl std::fmt::Debug for MdnsAdvertisement {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("MdnsAdvertisement").field("fullname", &self.fullname).finish_non_exhaustive()
+    }
+}
+
+impl Drop for MdnsAdvertisement {
+    fn drop(&mut self) {
+        let _ = self.daemon.unregister(&self.fullname);
+        let _ = self.daemon.shutdown();
+        if let Some(monitor) = self.monitor.take() { let _ = monitor.join(); }
+    }
+}
+
+#[derive(Debug)]
+struct SecondaryRuntimeService {
+    stop: Arc<AtomicBool>,
+    cancellation: ClientTransportCancellation,
+    join: Option<JoinHandle<Result<usage_device_sync::RuntimeRunReport, SyncError>>>,
+}
+
+impl Default for SyncControl {
+    fn default() -> Self {
+        let state = SyncControlState::default();
+        let interrupt = Arc::clone(&state.interrupt);
+        Self { state: Arc::new(Mutex::new(state)), interrupt }
+    }
+}
+
+impl Drop for SyncService {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(join) = self.join.take() { let _ = join.join(); }
+    }
+}
+
+impl Drop for SecondaryRuntimeService {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        self.cancellation.cancel();
+        if let Some(join) = self.join.take() { let _ = join.join(); }
+    }
+}
+
+impl Drop for SyncRecoveryService {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(join) = self.join.take() { let _ = join.join(); }
+    }
+}
+
+/// State and mutating actions for the strict sync service. The IPC surface is
+/// one command, but every mutation below opens the real SyncStore and returns
+/// its error; the old SSH ServerSheet remains a separate feature.
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncDeviceView {
+    pub device_id: String,
+    pub origin: String,
+    pub display_name: String,
+    pub os: String,
+    pub role: String,
+    pub status: String,
+    pub data_epoch: u64,
+    pub active_stream_id: Option<String>,
+    pub last_generation: Option<u64>,
+    pub last_merged_at_ms: Option<i64>,
+    pub snapshot_complete: bool,
+    /// Live authenticated upload socket right now (primary's view only).
+    pub live: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncDevicesView {
+    pub primary_id: Option<String>,
+    pub primary_display_name: Option<String>,
+    /// Secondary only: the heartbeat watchdog's real-time read of the
+    /// resident upload socket, not a poll-derived guess.
+    pub primary_link_live: bool,
+    /// Secondary only: the primary's OS as it advertised itself at pairing,
+    /// for the platform icon on the device list. Absent on old pairings.
+    pub primary_os: Option<String>,
+    pub role: String,
+    pub service_running: bool,
+    pub primary_starting: bool,
+    pub primary_data_sharing_enabled: bool,
+    /// Primary only: pairing requests are approved on arrival while on.
+    pub primary_auto_approve_enabled: bool,
+    pub service_health: Option<String>,
+    pub endpoint: Option<String>,
+    pub certificate_pin: Option<String>,
+    pub stream_id: Option<String>,
+    pub data_epoch: Option<u64>,
+    /// Secondary only: initial upload snapshot completion. `None` before a
+    /// stream exists, `Some(false)` while pages are still being ACKed.
+    pub upload_complete: Option<bool>,
+    /// Secondary only: primary-data downlink completion. `None` until the
+    /// primary shares its first page, `Some(false)` while the backfill runs.
+    pub download_complete: Option<bool>,
+    /// When each half last really finished (the applying transaction stamps
+    /// it), so the sheet's 已完成 can show its own age instead of a bare
+    /// flag that a disconnect never resets.
+    pub upload_complete_at_ms: Option<i64>,
+    pub download_complete_at_ms: Option<i64>,
+    pub last_error: Option<String>,
+    pub discovery_error: Option<String>,
+    pub last_connected_at_ms: Option<i64>,
+    pub operation_state: String,
+    pub last_checked_at_ms: Option<i64>,
+    pub invite_url: Option<String>,
+    pub invite_expires_at_ms: Option<i64>,
+    pub pairing_pending: bool,
+    pub discovered_primaries: Vec<DiscoveredPrimaryView>,
+    /// How many times a device crossed stale→fresh since this panel started:
+    /// the reconnect-count a user can read without parsing logs.
+    pub sessions_since_boot: u64,
+    /// The presence window, for the diagnostics screen to explain the dot.
+    pub presence_window_ms: i64,
+    pub devices: Vec<SyncDeviceView>,
+    pub pairing_requests: Vec<PairingRequestState>,
+}
+
+fn sync_device_view(device: DeviceStatusView) -> SyncDeviceView {
+    let live = ws_live_seen().lock().map(|seen| device_is_live(seen.get(&device.device_id).copied(), current_ms())).unwrap_or(false);
+    SyncDeviceView {
+        live,
+        device_id: device.device_id,
+        origin: device.origin,
+        display_name: device.display_name,
+        os: device.os,
+        role: match device.role {
+            usage_device_sync::DeviceRole::Primary => "primary",
+            usage_device_sync::DeviceRole::Secondary => "secondary",
+        }.into(),
+        status: match device.status {
+            DeviceStatus::Pending => "pending",
+            DeviceStatus::Paired => "paired",
+            DeviceStatus::Paused => "paused",
+            DeviceStatus::Revoked => "revoked",
+            DeviceStatus::ReconcileRequired => "reconcile_required",
+        }.into(),
+        data_epoch: device.data_epoch,
+        active_stream_id: device.active_stream_id,
+        last_generation: device.last_generation,
+        last_merged_at_ms: device.last_merged_at_ms,
+        snapshot_complete: device.snapshot_complete,
+    }
+}
+
+fn sync_dir() -> Result<PathBuf, String> {
+    usage_core::paths::data_dir()
+        .map(|root| root.join("device-sync"))
+        .ok_or_else(|| "no platform user data directory available".into())
+}
+
+fn sync_index_path() -> Result<PathBuf, String> {
+    usage_index::Index::default_path().ok_or_else(|| "no platform data directory available".into())
+}
+
+/// Surfaces pre-split pairing records before the first read-write open sheds
+/// them: the upgrade that moved pairing into sync_state.db does not migrate,
+/// and a silently empty device list would read as lost data. Runs on the
+/// status path, so the notice is on screen within one poll; the records are
+/// dropped by the next SyncStore::open and the notice never fires again.
+fn note_legacy_pairing_state(state: &mut SyncControlState, index_path: &std::path::Path) {
+    if state.last_error.is_some() { return; }
+    match SyncStore::count_legacy_pairing_state(index_path) {
+        Ok(0) => {}
+        Ok(count) => state.last_error = Some(format!(
+            "legacy pairing storage found in the index database: {count} record(s) need re-pairing after this upgrade — invite the devices again from the device sheet"
+        )),
+        Err(_) => {}
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct McpClientConfigView {
+    pub config_json: String,
+    pub endpoint: Option<String>,
+    pub ready: bool,
+    pub reason: Option<String>,
+    pub expires_at_ms: Option<i64>,
+    /// Whether the single credential currently carries control powers.
+    pub control: bool,
+}
+
+/// Build the standard HTTP `mcpServers` entry that can be pasted into another
+/// AI client's MCP settings. The endpoint is reachable on this machine's LAN
+/// and exists only while the MCP switch is enabled in this kimo-token process.
+///
+/// One credential for the LAN MCP server. The 允许局域网 MCP 控制 switch
+/// decides what that credential is worth: full control when on, read-only
+/// when off. Same token, same config either way — only the scope moves.
+#[tauri::command]
+pub fn get_mcp_client_config(state: State<'_, crate::diagnostics::DiagnosticsState>) -> Result<McpClientConfigView, String> {
+    let config = state.local_http_client_config();
+    let control = state.snapshot().lan_control_enabled;
+    let Some((endpoint, bearer, expiry)) = config else {
+        return Ok(McpClientConfigView {
+            config_json: String::new(), endpoint: None, ready: false,
+            reason: Some("请先开启 MCP 诊断服务；MCP 保持开启时配置长期有效，手动关闭后重新开启会生成新凭据".into()),
+            expires_at_ms: None, control,
+        });
+    };
+    let config_json = serde_json::to_string_pretty(&json!({
+        "mcpServers": { "kimo-token": { "url": endpoint, "headers": { "Authorization": format!("Bearer {bearer}") } } }
+    })).map_err(|error| format!("cannot encode MCP client config: {error}"))?;
+    Ok(McpClientConfigView {
+        config_json, endpoint: Some(endpoint), ready: true, reason: None,
+        expires_at_ms: expiry, control,
+    })
+}
+
+fn current_ms() -> i64 {
+    usage_core::report::now_ms()
+}
+
+fn state_primary_id(state: &SyncControlState, snapshot: &DeviceSyncSnapshot) -> Result<String, String> {
+    state.primary_id.clone().or_else(|| snapshot.primary_id.clone()).ok_or_else(|| "primary is not configured; start the primary service first".into())
+}
+
+/// The diagnostics authority belongs to the running HTTPS primary.  Keep the
+/// listener handle and certificate behind this small crate-private snapshot so
+/// the panel command cannot manufacture a local or detached grant.
+pub(crate) struct PrimaryDiagnosticsContext {
+    pub handle: usage_device_sync::HttpsSyncServerHandle,
+    pub endpoint: String,
+    pub certificate_pin: String,
+    pub certificate_der: Vec<u8>,
+}
+
+pub(crate) fn primary_diagnostics_context(control: &SyncControl) -> Result<PrimaryDiagnosticsContext, String> {
+    let state = control.state.lock().map_err(|_| "sync management state is busy".to_string())?;
+    let service = state.service.as_ref().ok_or_else(|| "primary sync service is not running".to_string())?;
+    if state.role != "primary" {
+        return Err("diagnostics grants are available only while this device is the primary".into());
+    }
+    if service.join.as_ref().is_some_and(JoinHandle::is_finished) {
+        return Err("primary sync service is no longer running".into());
+    }
+    Ok(PrimaryDiagnosticsContext {
+        handle: service.diagnostics.clone(),
+        endpoint: state.endpoint.clone().ok_or_else(|| "primary endpoint is unavailable".to_string())?,
+        certificate_pin: state.certificate_pin.clone().ok_or_else(|| "primary certificate pin is unavailable".to_string())?,
+        certificate_der: service.certificate_der.clone(),
+    })
+}
+
+fn reap_service(state: &mut SyncControlState) {
+    let finished = state.service.as_ref().and_then(|service| service.join.as_ref()).is_some_and(JoinHandle::is_finished);
+    if !finished { return; }
+    let mut service = state.service.take().expect("finished service exists");
+    if let Some(join) = service.join.take() {
+        if let Err(error) = join.join().unwrap_or_else(|_| Err(TransportError::Config("sync service thread panicked".into()))) {
+            state.last_error = Some(error.to_string());
+            state.phase = SyncPhase::Error;
+        }
+    }
+    state.endpoint = None;
+    state.certificate_pin = None;
+}
+
+fn stop_service(state: &mut SyncControlState) {
+    state.runtime.take();
+    state.service.take();
+    primary_link_seen().store(0, std::sync::atomic::Ordering::Release);
+}
+
+fn retry_disconnect_notifications(index_path: &std::path::Path) -> Result<(), String> {
+    let notices = SyncStore::read_disconnect_notices(index_path, current_ms()).map_err(|error| error.to_string())?;
+    // At most four seconds of network work per recovery tick, outside the
+    // control mutex. A status read and a new role never wait for this ACK.
+    for notice in notices.into_iter().take(2) {
+        // Same guard as the worker drain: a notice for a primary this device
+        // has re-paired (any identity) is obsolete and must never revoke the
+        // fresh binding.
+        if let Ok(Some(current)) = SyncStore::read_secondary_config(index_path) {
+            if current.primary_id == notice.config.primary_id { continue; }
+        }
+        let result = usage_device_sync::deliver_disconnect_notice(&notice.config, current_ms());
+        if let Ok(mut store) = SyncStore::open(index_path, notice.config.primary_id.clone()) {
+            let error = result.as_ref().err().map(ToString::to_string);
+            let _ = store.finish_disconnect_notice(&notice.config.device_id, current_ms(), error.as_deref());
+            // Retain the key for this primary so re-pairing preserves event IDs.
+            // Metadata only; queue/identity/endpoint details stay out of logs.
+            log_sync_action("disconnect_notify", Instant::now(), error.as_deref());
+        }
+    }
+    Ok(())
+}
+
+/// Re-attempt the stop-time disconnect writes the background task could not
+/// land (the index stayed locked or broken through its whole bounded retry).
+/// Same guard as the task: a config row for the same primary AND device means
+/// the user re-paired with the retained identity and the notice is obsolete.
+/// Failures go back on the queue for the next tick.
+fn drain_pending_disconnect_writes(index_path: &std::path::Path, pending: &Mutex<Vec<PendingDisconnectWrite>>, delivery: &Mutex<()>) {
+    let writes = {
+        let Ok(mut slot) = pending.lock() else { return; };
+        if slot.is_empty() { return; }
+        std::mem::take(&mut *slot)
+    };
+    let mut remaining = Vec::new();
+    for write in writes {
+        let outcome = (|| -> Result<(), String> {
+            if let Ok(Some(current)) = SyncStore::read_secondary_config(index_path) {
+                if current.primary_id == write.config.primary_id && current.device_id == write.config.device_id { return Ok(()); }
+            }
+            let mut store = SyncStore::open(index_path, write.config.primary_id.clone()).map_err(|error| error.to_string())?;
+            let _delivery = delivery.lock();
+            store.queue_secondary_disconnect(&write.config, write.queued_at_ms).map_err(|error| error.to_string())?;
+            Ok(())
+        })();
+        if let Err(error) = outcome {
+            crate::logging::info(&format!("sync: action=pending_disconnect_write outcome=error error={error}"));
+            remaining.push(write);
+        }
+    }
+    if !remaining.is_empty() {
+        if let Ok(mut slot) = pending.lock() { slot.extend(remaining); }
+    }
+}
+
+fn rediscover_secondary_endpoint(index_path: &std::path::Path) -> Option<(SecondarySyncConfig, String)> {
+    let config = SyncStore::read_secondary_config(index_path).ok()??;
+    let error = config.last_error.as_deref()?;
+    if !config.enabled || !(error.contains("transport I/O") || error.contains("transport timed out") || error.contains("TLS handshake") || error.contains("pin mismatch")) { return None; }
+    let candidate = discover_primaries().ok()?.into_iter().find(|candidate| {
+        candidate.primary_id == config.primary_id && !candidate.identity_conflict
+            && candidate.certificate_pin == hex_bytes(&config.certificate_pin) && candidate.endpoint != config.endpoint
+    })?;
+    let mut transport_config = HttpsTransportConfig::pinned(&candidate.endpoint, &config.server_name, config.certificate_der.clone());
+    transport_config.pinned_certificate_sha256 = config.certificate_pin;
+    transport_config.connect_timeout = Duration::from_secs(1);
+    transport_config.request_timeout = Duration::from_secs(2);
+    Tls13HttpsTransport::new(transport_config).ok()?.probe_tls().ok()?;
+    Some((config, candidate.endpoint))
+}
+
+fn clear_secondary_state(state: &mut SyncControlState) {
+    state.role.clear();
+    state.primary_id = None;
+    state.endpoint = None;
+    state.certificate_pin = None;
+    state.last_error = None;
+    state.discovery_error = None;
+    state.phase = SyncPhase::Idle;
+}
+
+fn clear_primary_state(state: &mut SyncControlState) {
+    ws_live_seen().lock().unwrap_or_else(|p| p.into_inner()).clear();
+    state.role.clear();
+    state.primary_id = None;
+    state.endpoint = None;
+    state.certificate_pin = None;
+    state.invite_url = None;
+    state.invite_expires_at_ms = None;
+    state.last_error = None;
+    state.discovery_error = None;
+    state.primary_starting = false;
+    state.phase = SyncPhase::Idle;
+}
+
+fn pending_pairing_path() -> Result<PathBuf, String> {
+    Ok(sync_dir()?.join("pending-pairing.json"))
+}
+
+fn write_pending_pairing(pending: &PendingPairing) -> Result<(), String> {
+    let path = pending_pairing_path()?;
+    let bytes = serde_json::to_vec(pending).map_err(|error| format!("cannot encode pending pairing: {error}"))?;
+    if bytes.len() > usage_device_sync::MAX_MANIFEST_BYTES {
+        return Err("pending pairing is too large".into());
+    }
+    if let Ok(metadata) = std::fs::symlink_metadata(&path) {
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(format!("pending pairing path is not a regular file: {}", path.display()));
+        }
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path).map_err(|error| format!("cannot persist pending pairing: {error}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600)).map_err(|error| format!("cannot protect pending pairing: {error}"))?;
+    }
+    file.write_all(&bytes).map_err(|error| format!("cannot persist pending pairing: {error}"))?;
+    file.sync_all().map_err(|error| format!("cannot persist pending pairing: {error}"))?;
+    Ok(())
+}
+
+fn read_pending_pairing() -> Result<Option<PendingPairing>, String> {
+    let path = pending_pairing_path()?;
+    let Ok(metadata) = std::fs::symlink_metadata(&path) else { return Ok(None); };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(format!("pending pairing path is not a regular file: {}", path.display()));
+    }
+    if metadata.len() > usage_device_sync::MAX_MANIFEST_BYTES as u64 {
+        return Err("pending pairing is too large".into());
+    }
+    let raw = std::fs::read(&path).map_err(|error| format!("cannot read pending pairing: {error}"))?;
+    let pending = serde_json::from_slice(&raw).map_err(|error| format!("invalid pending pairing: {error}"))?;
+    Ok(Some(pending))
+}
+
+fn clear_pending_pairing() -> Result<(), String> {
+    let path = pending_pairing_path()?;
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            Err(format!("pending pairing path is not a regular file: {}", path.display()))
+        }
+        Ok(_) => std::fs::remove_file(&path).map_err(|error| format!("cannot clear pending pairing: {error}")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("cannot inspect pending pairing: {error}")),
+    }
+}
+
+fn cancel_pending_pairing(index_path: &std::path::Path) -> Result<(), String> {
+    let Some(pending) = read_pending_pairing()? else { return Ok(()); };
+    let identity_path = pending.identity_path.unwrap_or(sync_dir()?.join("secondary-identity.json"));
+    let bound = SyncStore::read_status(index_path).map_err(|error| error.to_string())?.primary_id.unwrap_or_else(|| pending.primary_id.clone());
+    let mut store = SyncStore::open(index_path, bound).map_err(|error| error.to_string())?;
+    store.queue_secondary_disconnect(&SecondarySyncConfig {
+        primary_id: pending.primary_id, primary_display_name: pending.primary_display_name, primary_os: pending.primary_os, device_id: pending.request.device_id, origin: pending.request.origin,
+        endpoint: pending.endpoint, server_name: pending.server_name,
+        certificate_der: pending.certificate_der, certificate_pin: pending.certificate_pin, identity_path,
+        stream_id: None, data_epoch: None, expected_generation: None, enabled: false, capture_enabled: false,
+        last_error: None, last_manifest_hash: None, last_gzip_hash: None,
+        last_connected_at_ms: None, last_ack_generation: None, last_ack_receipt_hash: None,
+    }, current_ms()).map_err(|error| error.to_string())?;
+    clear_pending_pairing()
+}
+
+fn send_pending_pairing(interrupt: &SyncInterrupt, pending: &PendingPairing) -> Result<(), String> {
+    pending.request.verify().map_err(|error| format!("pending pairing is invalid: {error}"))?;
+    let mut transport_config = HttpsTransportConfig::pinned(
+        pending.endpoint.clone(), pending.server_name.clone(), pending.certificate_der.clone(),
+    );
+    transport_config.pinned_certificate_sha256 = pending.certificate_pin;
+    let mut transport = Tls13HttpsTransport::new(transport_config).map_err(|error| error.to_string())?;
+    interrupt.install(&transport);
+    let response = transport.send_pairing_request(&pending.request).map_err(|error| format!("pairing request failed: {error}"))?;
+    match response.status.as_str() {
+        // "paired" is the auto-approve answer: the primary approved on
+        // arrival, so the pairing is done — same as a manual approval ("approved")
+        // and a replay of one.
+        "pending" | "approved" | "paired" => Ok(()),
+        "rejected" => Err("pairing request was rejected".into()),
+        "expired" => Err("pairing invite expired".into()),
+        _ => Err("pairing response contains an unknown state".into()),
+    }
+}
+
+fn pairing_invite_needs_renewal(error: &str) -> bool {
+    error.contains("pairing invite expired")
+        || error.contains("pairing invite already consumed")
+        || error.contains("pairing invite is already bound")
+        || error.contains("pairing invite was concurrently claimed")
+}
+
+fn renew_pending_pairing(interrupt: &SyncInterrupt, pending: &PendingPairing, identity: &DeviceIdentity) -> Result<PendingPairing, String> {
+    let mut transport_config = HttpsTransportConfig::pinned(
+        pending.endpoint.clone(), pending.server_name.clone(), pending.certificate_der.clone(),
+    );
+    transport_config.pinned_certificate_sha256 = pending.certificate_pin;
+    let mut transport = Tls13HttpsTransport::new(transport_config).map_err(|error| error.to_string())?;
+    interrupt.install(&transport);
+    let (invite, certificate_der) = transport.request_pairing_invite(&pending.primary_id, &pending.endpoint)
+        .map_err(|error| format!("cannot renew pairing invite: {error}"))?;
+    let certificate_pin = parse_pin(&invite.certificate_pin)?;
+    if hash_bytes(&certificate_der) != certificate_pin || certificate_pin != pending.certificate_pin {
+        return Err("renewed pairing invite changed the pinned primary certificate".into());
+    }
+    let request = PairingRequest::new(&invite, identity, pending.request.os.clone()).map_err(|error| error.to_string())?;
+    Ok(PendingPairing {
+        request,
+        primary_id: pending.primary_id.clone(),
+        primary_display_name: pending.primary_display_name.clone(),
+        primary_os: pending.primary_os.clone(),
+        endpoint: invite.endpoint,
+        server_name: pending.server_name.clone(),
+        certificate_der,
+        certificate_pin,
+        identity_path: pending.identity_path.clone(),
+    })
+}
+
+fn primary_endpoint(config: &PrimarySyncConfig) -> Option<String> {
+    let address: std::net::SocketAddr = config.bind_addr.parse().ok()?;
+    let host = config.advertise_host.as_deref()?;
+    let host = advertised_endpoint_host(host, config.allow_lan).ok()?;
+    Some(format!("https://{host}:{}", address.port()))
+}
+
+fn reap_runtime(state: &mut SyncControlState) {
+    let finished = state.runtime.as_ref()
+        .and_then(|runtime| runtime.join.as_ref())
+        .is_some_and(JoinHandle::is_finished);
+    if !finished { return; }
+    let mut runtime = state.runtime.take().expect("finished secondary runtime exists");
+    if let Some(join) = runtime.join.take() {
+        let result = join.join()
+            .map_err(|_| SyncError::Security("secondary runtime thread panicked".into()))
+            .and_then(|result| result);
+        if let Err(error) = result {
+            state.last_error = Some(error.to_string());
+            state.phase = SyncPhase::Error;
+        }
+    }
+}
+
+fn secondary_transport(config: &SecondarySyncConfig) -> Result<Tls13HttpsTransport, String> {
+    let mut transport_config = HttpsTransportConfig::pinned(
+        config.endpoint.clone(), config.server_name.clone(), config.certificate_der.clone(),
+    );
+    transport_config.pinned_certificate_sha256 = config.certificate_pin;
+    Tls13HttpsTransport::new(transport_config).map_err(|error| format!("cannot configure pinned sync transport: {error}"))
+}
+
+/// One wake for every sync-state change that happens outside a panel
+/// command: refresh the sync sheet's snapshot (sync-updated) and refold the
+/// figures (Msg::Refresh) so both surfaces move together.
+fn wake_sync_ui() {
+    if let Some(app) = crate::notify::app_handle() {
+        let _ = app.emit("sync-updated", ());
+        if let Some(channel) = app.try_state::<EngineChannel>() {
+            let _ = channel.0.send(Msg::Refresh);
+        }
+    }
+}
+
+fn start_secondary_runtime(state: &mut SyncControlState) -> Result<(), String> {
+    reap_runtime(state);
+    if state.runtime.is_some() { return Ok(()); }
+    if state.service.is_some() || state.role == "primary" {
+        return Err("this kimo-token instance is already the primary sync service".into());
+    }
+    let index_path = sync_index_path()?;
+    let config = SyncStore::read_secondary_config(&index_path)
+        .map_err(|error| format!("cannot read secondary sync configuration: {error}"))?
+        .ok_or_else(|| "pair this device before starting secondary sync".to_string())?;
+    if !config.enabled { return Err("secondary sync is disabled; pair this device or press Start again".into()); }
+    let identity = DeviceIdentity::load_or_create(
+        config.identity_path.clone(), config.origin.clone(), config.origin.clone(),
+    ).map_err(|error| format!("cannot load secondary identity: {error}"))?;
+    if identity.device_id != config.device_id || identity.origin != config.origin {
+        return Err("secondary identity does not match the paired device configuration".into());
+    }
+    let transport = secondary_transport(&config)?;
+    // The heartbeat watchdog proves the primary link dead within one 3 s
+    // cycle; the flag feeds the status snapshots, so the panel flips to
+    // 重试连接 without waiting for a failed poll. The same edge drives the
+    // recovery banner: a down→up transition means the primary came back
+    // while nobody was watching. Two guards keep it from crying wolf: the
+    // first connect of a fresh runtime (app launch, 重试连接) is not news
+    // unless the runtime had been struggling past a minute, and a blip is
+    // only announced after this session has actually carried a live link.
+    let primary_name = config.primary_display_name.clone().filter(|name| !name.trim().is_empty()).unwrap_or_else(|| config.primary_id.clone());
+    let hook_started = std::time::Instant::now();
+    let ever_live = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ever_live_hook = Arc::clone(&ever_live);
+    transport.set_ws_link_hook(move |live| {
+        // The hook fires on every healthy heartbeat tick (3 s) and once with
+        // `false` when the watchdog proves the socket dead. The panel's link
+        // state is the freshness window over these stamps, so the wake and
+        // the announcement fire on the stale→fresh transition — a session
+        // rebuilt within the window is not news, which is the point.
+        let woke = if live {
+            let was_stale = !primary_link_fresh();
+            primary_link_seen().store(current_ms() as u64, std::sync::atomic::Ordering::Release);
+            was_stale
+        } else {
+            // A dead socket ages out of the window and the poll renders it;
+            // nothing the user can see has changed yet.
+            false
+        };
+        if woke { wake_sync_ui(); }
+        if woke && NOTIFY_DEVICE_PRESENCE.load(std::sync::atomic::Ordering::Acquire) && (ever_live_hook.swap(true, std::sync::atomic::Ordering::Relaxed) || hook_started.elapsed() > std::time::Duration::from_secs(60)) {
+            crate::notify::post_primary_online(&primary_name);
+        }
+    });
+    state.interrupt.install(&transport);
+    let cancellation = transport.cancellation();
+    let mut store = SyncStore::open(&index_path, config.primary_id.clone())
+        .map_err(|error| format!("cannot open secondary sync store: {error}"))?
+        .with_local_tool(crate::PANEL_TOOL);
+    // The panel is single-instance: a lease still held under this device's
+    // panel-secondary prefix belongs to a process that died without releasing
+    // (installer stop, crash, reboot). Reclaim it now instead of letting the
+    // fresh runtime wait out the whole 15-minute TTL with the link dark.
+    if store.steal_stale_panel_lease(&config.device_id).map_err(|error| format!("cannot reclaim the stale panel lease: {error}"))? {
+        crate::logging::info("sync: reclaimed a stale panel-secondary scheduler lease left by a killed process");
+    }
+    let owner = format!("panel-secondary-{}", identity.device_id);
+    let runtime_config = SyncRuntimeConfig::new(owner).map_err(|error| error.to_string())?;
+    let mut runtime = SyncRuntime::new_secondary_with_display_name(
+        store, transport, runtime_config, identity, usage_index::hostname(),
+    );
+    runtime.set_cut_off_notify(|reason| {
+        crate::notify::post_cut_off(reason);
+        wake_sync_ui();
+    });
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_stop = Arc::clone(&stop);
+    let join = thread::spawn(move || runtime.run_until_real(&thread_stop));
+    state.role = "secondary".into();
+    state.primary_id = Some(config.primary_id);
+    state.endpoint = Some(config.endpoint);
+    state.certificate_pin = Some(hex_bytes(&config.certificate_pin));
+    state.last_error = config.last_error;
+    state.runtime = Some(SecondaryRuntimeService { stop, cancellation, join: Some(join) });
+    Ok(())
+}
+
+fn start_primary(state: &mut SyncControlState, bind: Option<String>, advertise_host: Option<String>, allow_lan: bool, diagnostics_app: Option<AppHandle>) -> Result<(), String> {
+    let started = Instant::now();
+    let stage = |name: &str, at: Instant| crate::logging::info(&format!("sync: action=start_primary stage={name} elapsed_ms={}", at.elapsed().as_millis()));
+    let index_path = sync_index_path()?;
+    stage("path", started);
+    note_legacy_pairing_state(state, &index_path);
+    reap_service(state);
+    if state.service.is_some() { return Ok(()); }
+    if state.runtime.is_some() {
+        return Err("stop secondary sync before switching this device to primary".into());
+    }
+    let secondary_config = SyncStore::read_secondary_config(&index_path).map_err(|error| error.to_string())?;
+    if let Some(config) = &secondary_config {
+        if config.enabled {
+            // A crashed/stale secondary has no runtime to stop, so make the
+            // persisted stop explicit before switching roles.
+            let mut stopped = SyncStore::open(&index_path, config.primary_id.clone()).map_err(|e| e.to_string())?;
+            stopped.set_secondary_enabled(false, current_ms()).map_err(|e| format!("cannot stop stale secondary sync: {e}"))?;
+        }
+    }
+    let directory = sync_dir()?;
+    let identity_path = directory.join("primary-identity.json");
+    let identity = DeviceIdentity::load_or_create(&identity_path, "primary", "kimo-token primary").map_err(|e| format!("cannot create primary identity: {e}"))?;
+    stage("identity", started);
+    // Both primary preferences follow the same precedence read: an existing
+    // row for this identity wins over the fresh-config defaults, because the
+    // config upsert below overwrites every column — without it, a restart's
+    // restore_primary silently reset what the user last set.
+    let existing_primary = SyncStore::read_primary_config(&index_path)
+        .map_err(|error| format!("cannot read primary sync preferences: {error}"))?
+        .filter(|config| config.primary_id == identity.device_id);
+    let share_data_with_secondaries = existing_primary.as_ref().is_some_and(|config| config.share_data_with_secondaries);
+    let auto_approve_pairing = existing_primary.as_ref().is_some_and(|config| config.auto_approve_pairing);
+    let cert_path = directory.join("server-cert.pem");
+    let key_path = directory.join("server-key.pem");
+    let (certificate_der, private_key_der) = usage_device_sync::ensure_server_certificate(&cert_path, &key_path, "localhost").map_err(|e| format!("cannot create private sync certificate: {e}"))?;
+    stage("cert", started);
+    let bind_text = bind.unwrap_or_else(|| DEFAULT_PRIMARY_BIND.into());
+    let bind_addr: std::net::SocketAddr = bind_text.parse().map_err(|e| format!("sync bind address is invalid: {e}"))?;
+    if allow_lan && bind_addr.ip().is_loopback() {
+        return Err("LAN/VPN access requires a non-loopback listen address".into());
+    }
+    if !allow_lan && !bind_addr.ip().is_loopback() {
+        return Err("a non-loopback primary listener requires LAN/VPN access; enable Allow LAN/VPN or use a loopback bind for local testing".into());
+    }
+    // A persisted advertise IP the machine no longer holds is dropped rather
+    // than honored: the primary would bind fine and every secondary would
+    // dial the old address forever. Self-heals to the current default-route
+    // address; the new host is persisted with this start's config.
+    let advertise_host = match advertise_host {
+        Some(host) if advertise_host_is_stale(&host) => {
+            crate::logging::error(&format!(
+                "sync: advertised address {host} is no longer a local interface — re-inferring from the default route"
+            ));
+            None
+        }
+        other => other,
+    };
+    let host = match advertise_host.filter(|host| !host.trim().is_empty()) {
+        Some(host) => host,
+        None if bind_addr.ip().is_loopback() => "127.0.0.1".into(),
+        None => infer_advertise_host().ok_or_else(|| "could not determine a reachable LAN address; enter one such as 192.168.1.20 in Advertised address".to_string())?,
+    };
+    let endpoint_host = advertised_endpoint_host(&host, allow_lan)?;
+    let existing_primary_id = SyncStore::read_status(&index_path).map_err(|error| format!("cannot read sync role: {error}"))?.primary_id;
+    let current_primary_id = existing_primary_id.unwrap_or_else(|| identity.device_id.clone());
+    // Deferred open: skips the index write transactions that queue for
+    // seconds behind the ingest engine, so the start's banner never waits
+    // for them.
+    let mut store = SyncStore::open_deferred(&index_path, current_primary_id.clone())
+        .map_err(|e| format!("cannot open sync store: {e}"))?
+        .with_local_tool(crate::PANEL_TOOL);
+    stage("store_open", started);
+    if current_primary_id != identity.device_id {
+        store.rotate_primary_id(identity.device_id.clone(), current_ms()).map_err(|e| format!("cannot switch sync role: {e}"))?;
+        if let Some(config) = &secondary_config {
+            if config.identity_path.parent() == Some(directory.as_path()) { let _ = std::fs::remove_file(&config.identity_path); }
+        }
+    } else if let Some(config) = &secondary_config {
+        store.clear_secondary_config(current_ms()).map_err(|e| format!("cannot clear stopped secondary binding: {e}"))?;
+        if config.identity_path.parent() == Some(directory.as_path()) { let _ = std::fs::remove_file(&config.identity_path); }
+    }
+    let diagnostics_host = usage_device_sync::DiagnosticsHost::default();
+    diagnostics_host.set_log_path("panel", crate::logging::log_dir().join("panel.log")).map_err(|e| format!("cannot configure diagnostics panel log: {e}"))?;
+    diagnostics_host.set_log_path("sync", crate::logging::log_dir().join("diagnostics.log")).map_err(|e| format!("cannot configure diagnostics sync log: {e}"))?;
+    diagnostics_host.set_build_summary(Some(format!("kimo-token {} build {}", env!("CARGO_PKG_VERSION"), env!("KIMO_TOKEN_BUILD_ID")))).map_err(|e| format!("cannot configure diagnostics build summary: {e}"))?;
+    diagnostics_host.set_panel_state(Some("sync".into())).map_err(|e| format!("cannot configure diagnostics panel state: {e}"))?;
+    if let Some(app) = diagnostics_app.clone() {
+        diagnostics_host.set_check_runner(move |checks| crate::diagnostics::run_remote_checks(app.clone(), checks))
+            .map_err(|e| format!("cannot configure diagnostics check runner: {e}"))?;
+    }
+    let server = usage_device_sync::HttpsSyncServer::bind_with_host(HttpsServerConfig {
+        bind_addr,
+        certificate_der: certificate_der.clone(),
+        private_key_der,
+        allow_lan,
+        allowed_peer_ips: Vec::new(),
+        max_body_bytes: usage_device_sync::MAX_COMPRESSED_BYTES,
+        max_concurrent: 4,
+        staging_dir: directory.join("staging"),
+        idle_timeout: std::time::Duration::from_secs(30),
+        total_timeout: std::time::Duration::from_secs(600),
+        staging_quota_bytes: 512 * 1024 * 1024,
+    }, store, diagnostics_host).map_err(|e| format!("cannot start sync listener: {e}"))?;
+    stage("listener_bind", started);
+    server.set_log_sink(|is_error, message| {
+        if is_error { crate::logging::error(message); } else { crate::logging::info(message); }
+    }).map_err(|error| format!("cannot configure sync runtime logging: {error}"))?;
+    // Real-time device presence: the hook fires from the WS lifecycle — the
+    // moment an authenticated socket comes up or dies — and both updates the
+    // registry the status snapshots read and pushes the change at the panel
+    // so the online/offline flip never waits for the poll cadence.
+    {
+        let app_for_ws = diagnostics_app.clone();
+        server.set_ws_event_sink(move |device_id, live| {
+            // The mark arrives on every authenticated frame (the 3 s session
+            // heartbeat), so the map stays fresh; the panel is woken only
+            // when the freshness window flips — waking per tick would be
+            // spam, the poll cadence renders the rest.
+            let woke = live && {
+                let mut seen = ws_live_seen().lock().unwrap_or_else(|p| p.into_inner());
+                let was_stale = !device_is_live(seen.get(device_id).copied(), current_ms());
+                seen.insert(device_id.to_string(), current_ms());
+                was_stale
+            };
+            if woke {
+                sessions_since_boot().fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            if woke {
+                if let Some(app) = &app_for_ws {
+                    use tauri::Emitter;
+                    let _ = app.emit("sync-devices-changed", device_id.to_string());
+                }
+            }
+        }).map_err(|error| format!("cannot configure ws event sink: {error}"))?;
+    }
+    // A pairing request lands in sync_state.db on the service thread, outside
+    // any panel command; push the news instead of letting the UI poll for it,
+    // and toast the owner — a closed panel must not swallow a device asking
+    // to pair. Auto-approved pairings toast as done; pending ones ask.
+    if let Some(app) = diagnostics_app.as_ref() {
+        let app = app.clone();
+        server.set_pairing_notify(move |display_name: &str, auto_approved: bool| {
+            let _ = app.emit("sync-updated", ());
+            crate::notify::post_pairing_request(display_name, auto_approved);
+        }).map_err(|error| format!("cannot configure sync pairing notify: {error}"))?;
+    }
+    if let Some(app) = diagnostics_app {
+        let diagnostics_host = server.diagnostics_host();
+        let diag_app = app.clone();
+        server.diagnostics_host().set_control_handler(move |tool, arguments| {
+            dispatch_diagnostics_control(diag_app.clone(), diagnostics_host.clone(), tool, arguments)
+        }).map_err(|e| format!("cannot configure diagnostics control handler: {e}"))?;
+        let refresh_app = app;
+        let sink_index = index_path.clone();
+        server.set_disconnect_sink(move |device_id: &str| {
+            let _ = refresh_app.emit("sync-updated", ());
+            if let Some(channel) = refresh_app.try_state::<EngineChannel>() {
+                let _ = channel.0.send(Msg::Refresh);
+            }
+            // The list refresh covers the UI; the toast covers the owner who
+            // is not looking at it. Resolve the device's display name off the
+            // busy-tolerant read path, then toast off this connection thread.
+            let (device_id, sink_index) = (device_id.to_string(), sink_index.clone());
+            tauri::async_runtime::spawn_blocking(move || {
+                let name = SyncStore::read_status(&sink_index).ok()
+                    .and_then(|status| status.devices.into_iter().find(|d| d.device_id == device_id))
+                    .map(|d| if d.display_name.trim().is_empty() { d.origin } else { d.display_name })
+                    .unwrap_or_else(|| device_id.clone());
+                crate::notify::post_secondary_left(&name);
+            });
+        }).map_err(|e| format!("cannot configure disconnect listener: {e}"))?;
+    }
+    let diagnostics = server.diagnostics_handle();
+    let address = server.local_addr().map_err(|e| e.to_string())?;
+    let endpoint = format!("https://{endpoint_host}:{}", address.port());
+    // The role row lives in sync_state.db: persist it without opening the
+    // usage index, so a start cannot wait out the ingest engine's write lock
+    // just to record its own config. `:0` is valid for tests and must not
+    // come back as an unusable endpoint after an app restart.
+    SyncStore::write_primary_config_state(
+        &index_path,
+        &identity.device_id,
+        &PrimarySyncConfig {
+            primary_id: identity.device_id.clone(),
+            bind_addr: address.to_string(),
+            advertise_host: Some(host),
+            allow_lan,
+            enabled: true,
+            share_data_with_secondaries,
+            auto_approve_pairing,
+        },
+        current_ms(),
+    ).map_err(|e| format!("cannot persist primary sync configuration: {e}"))?;
+    stage("persist_config", started);
+    let mdns = if allow_lan {
+        let certificate_pin = hex_bytes(&hash_bytes(&certificate_der));
+        match register_mdns_primary(&identity.device_id, &certificate_pin, &endpoint) {
+            Ok(advertisement) => Some(advertisement),
+            Err(error) => { eprintln!("kimo-token sync: {error}"); None }
+        }
+    } else {
+        None
+    };
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_stop = Arc::clone(&stop);
+    let join = thread::spawn(move || server.run_until(&thread_stop));
+    state.role = "primary".into();
+    state.primary_id = Some(identity.device_id);
+    state.endpoint = Some(endpoint);
+    state.certificate_pin = Some(hex_bytes(&hash_bytes(&certificate_der)));
+    state.discovery_error = if allow_lan && mdns.is_none() { Some(mdns_permission_hint("mDNS publish failed")) } else { None };
+    state.last_error = None;
+    state.invite_url = None;
+    state.invite_expires_at_ms = None;
+    state.service = Some(SyncService { stop, join: Some(join), certificate_der, diagnostics, mdns });
+    Ok(())
+}
+
+fn diagnostics_params_object(arguments: &Value) -> Result<&serde_json::Map<String, Value>, DiagnosticsError> {
+    arguments.as_object().ok_or(DiagnosticsError::InvalidParams)
+}
+
+fn diagnostics_optional_string(params: &serde_json::Map<String, Value>, key: &str) -> Result<Option<String>, DiagnosticsError> {
+    params.get(key).map(|value| value.as_str().map(str::to_owned).ok_or(DiagnosticsError::InvalidParams)).transpose()
+}
+
+fn diagnostics_required_identifier(params: &serde_json::Map<String, Value>, key: &str) -> Result<String, DiagnosticsError> {
+    let value = diagnostics_optional_string(params, key)?.ok_or(DiagnosticsError::InvalidParams)?;
+    if value.is_empty() || value.len() > usage_device_sync::MAX_DIAGNOSTICS_STRING_BYTES { return Err(DiagnosticsError::InvalidParams); }
+    Ok(value)
+}
+
+fn spawn_diagnostics_panel_action(
+    app: AppHandle,
+    host: DiagnosticsHost,
+    tool: &str,
+    operation_id: String,
+    event: &str,
+    payload: Value,
+) {
+    let tool = tool.to_owned();
+    let event = event.to_owned();
+    tauri::async_runtime::spawn(async move {
+        let result = crate::diagnostics::wait_for_panel_visible(&app).await
+            .map_err(|_| DiagnosticsError::ToolUnavailable)
+            .and_then(|_| app.emit(&event, payload).map_err(|_| DiagnosticsError::Internal));
+        host.complete_control_operation(&operation_id, result.is_ok(), current_ms());
+        let response = match result {
+            Ok(()) => json!({ "tool": tool, "operation_id": operation_id, "ok": true }),
+            Err(error) => json!({ "tool": tool, "operation_id": operation_id, "ok": false, "error": error.to_string() }),
+        };
+        let _ = app.emit("diagnostics-control-result", response);
+    });
+}
+
+pub(crate) fn diagnostics_primary_start_request(value: &Value) -> Result<SyncManagementRequest, DiagnosticsError> {
+    let empty = serde_json::Map::new();
+    let params = if value.is_null() { &empty } else { value.as_object().ok_or(DiagnosticsError::InvalidParams)? };
+    diagnostics_only_keys(params, &["bind", "advertise_host", "allow_lan"])?;
+    let bind = diagnostics_optional_string(params, "bind")?;
+    let advertise_host = diagnostics_optional_string(params, "advertise_host")?;
+    let address = bind.as_deref().unwrap_or(DEFAULT_PRIMARY_BIND).parse::<std::net::SocketAddr>().map_err(|_| DiagnosticsError::InvalidParams)?;
+    let allow_lan = params.get("allow_lan").map(|value| value.as_bool().ok_or(DiagnosticsError::InvalidParams)).transpose()?.unwrap_or(!address.ip().is_loopback());
+    Ok(SyncManagementRequest::StartPrimary { bind, advertise_host, allow_lan })
+}
+
+fn diagnostics_only_keys(params: &serde_json::Map<String, Value>, allowed: &[&str]) -> Result<(), DiagnosticsError> {
+    if params.keys().all(|key| allowed.iter().any(|allowed| key == allowed)) { Ok(()) } else { Err(DiagnosticsError::InvalidParams) }
+}
+
+fn dispatch_diagnostics_control(app: AppHandle, host: DiagnosticsHost, tool: &str, arguments: Value) -> Result<Value, DiagnosticsError> {
+    let params = diagnostics_params_object(&arguments)?;
+    if serde_json::to_vec(params).map_err(|_| DiagnosticsError::InvalidParams)?.len() > usage_device_sync::MAX_DIAGNOSTICS_PARAMS_BYTES { return Err(DiagnosticsError::Limit); }
+    match tool {
+        "ui.capture_panel" => {
+            if !params.is_empty() { return Err(DiagnosticsError::InvalidParams); }
+            if !crate::diagnostics::panel_is_visible(&app) {
+                return Err(DiagnosticsError::ToolUnavailable);
+            }
+            let image = panel::capture_panel(&app).map_err(|_| DiagnosticsError::ToolUnavailable)?;
+            if image.data.len() > usage_device_sync::MAX_DIAGNOSTICS_IMAGE_BYTES { return Err(DiagnosticsError::Limit); }
+            Ok(json!({
+                "_mcp_image": {
+                    "mime_type": image.mime_type,
+                    "data_base64": base64::engine::general_purpose::STANDARD.encode(&image.data),
+                },
+                "width": image.width,
+                "height": image.height,
+                "scope": "kimo-token-panel",
+            }))
+        }
+        "ui.click_panel" => {
+            diagnostics_only_keys(params, &["x", "y"])?;
+            let x = params.get("x").and_then(Value::as_f64).ok_or(DiagnosticsError::InvalidParams)?;
+            let y = params.get("y").and_then(Value::as_f64).ok_or(DiagnosticsError::InvalidParams)?;
+            let operation_id = host.begin_control_operation(tool, current_ms())?;
+            if !crate::diagnostics::panel_is_visible(&app) {
+                host.complete_control_operation(&operation_id, false, current_ms());
+                return Err(DiagnosticsError::ToolUnavailable);
+            }
+            match panel::click_panel(&app, x, y) {
+                Ok(()) => {
+                    host.complete_control_operation(&operation_id, true, current_ms());
+                    Ok(json!({ "accepted": true, "tool": tool, "operation_id": operation_id, "x": x, "y": y, "scope": "kimo-token-panel" }))
+                }
+                Err(_) => {
+                    host.complete_control_operation(&operation_id, false, current_ms());
+                    Err(DiagnosticsError::ToolUnavailable)
+                }
+            }
+        }
+        "ui.open_sync_sheet" => {
+            if !params.is_empty() { return Err(DiagnosticsError::InvalidParams); }
+            let operation_id = host.begin_control_operation(tool, current_ms())?;
+            panel::show(&app, None);
+            spawn_diagnostics_panel_action(app, host, tool, operation_id.clone(), "sync-open-sheet", Value::Null);
+            Ok(json!({ "accepted": true, "tool": tool, "operation_id": operation_id }))
+        }
+        "ui.focus_device" => {
+            diagnostics_only_keys(params, &["device_id"])?;
+            let device_id = diagnostics_required_identifier(params, "device_id")?;
+            let operation_id = host.begin_control_operation(tool, current_ms())?;
+            panel::show(&app, None);
+            spawn_diagnostics_panel_action(app, host, tool, operation_id.clone(), "sync-focus-device", json!(device_id));
+            Ok(json!({ "accepted": true, "tool": tool, "device_id": device_id, "operation_id": operation_id }))
+        }
+        "sync.pair" => {
+            diagnostics_only_keys(params, &["invite", "origin", "display_name", "os"])?;
+            let invite = diagnostics_required_identifier(params, "invite")?;
+            if !usage_device_sync::PairingInvite::has_url_prefix(&invite) || invite.len() > usage_device_sync::MAX_DIAGNOSTICS_STRING_BYTES {
+                return Err(DiagnosticsError::InvalidParams);
+            }
+            let origin = diagnostics_optional_string(params, "origin")?;
+            let display_name = diagnostics_optional_string(params, "display_name")?;
+            let os = diagnostics_optional_string(params, "os")?;
+            if origin.as_ref().is_some_and(|value| value.len() > usage_device_sync::MAX_DIAGNOSTICS_STRING_BYTES)
+                || display_name.as_ref().is_some_and(|value| value.len() > usage_device_sync::MAX_DIAGNOSTICS_STRING_BYTES)
+                || os.as_ref().is_some_and(|value| value.len() > usage_device_sync::MAX_DIAGNOSTICS_STRING_BYTES) {
+                return Err(DiagnosticsError::Limit);
+            }
+            let operation_id = host.begin_control_operation(tool, current_ms())?;
+            spawn_diagnostics_sync_action(app, host, tool, operation_id.clone(), SyncManagementRequest::Pair { invite, origin, display_name, os });
+            Ok(json!({ "accepted": true, "tool": tool, "operation_id": operation_id }))
+        }
+        "sync.start_primary" => {
+            let request = diagnostics_primary_start_request(&Value::Object(params.clone()))?;
+            let operation_id = host.begin_control_operation(tool, current_ms())?;
+            spawn_diagnostics_sync_action(app, host, tool, operation_id.clone(), request);
+            Ok(json!({ "accepted": true, "tool": tool, "operation_id": operation_id }))
+        }
+        "sync.stop_primary" => {
+            if !params.is_empty() { return Err(DiagnosticsError::InvalidParams); }
+            let operation_id = host.begin_control_operation(tool, current_ms())?;
+            spawn_diagnostics_sync_action(app, host, tool, operation_id.clone(), SyncManagementRequest::Stop);
+            Ok(json!({ "accepted": true, "tool": tool, "operation_id": operation_id }))
+        }
+        "sync.stop_secondary" => {
+            if !params.is_empty() { return Err(DiagnosticsError::InvalidParams); }
+            let operation_id = host.begin_control_operation(tool, current_ms())?;
+            spawn_diagnostics_sync_action(app, host, tool, operation_id.clone(), SyncManagementRequest::Stop);
+            Ok(json!({ "accepted": true, "tool": tool, "operation_id": operation_id }))
+        }
+        "sync.discover" => {
+            if !params.is_empty() { return Err(DiagnosticsError::InvalidParams); }
+            let operation_id = host.begin_control_operation(tool, current_ms())?;
+            spawn_diagnostics_sync_action(app, host, tool, operation_id.clone(), SyncManagementRequest::Discover);
+            Ok(json!({ "accepted": true, "tool": tool, "operation_id": operation_id }))
+        }
+        "sync.approve_pairing" | "sync.reject_pairing" | "sync.clear_expired_request" => {
+            diagnostics_only_keys(params, &["request_id"])?;
+            let request_id = diagnostics_required_identifier(params, "request_id")?;
+            let action = if tool == "sync.approve_pairing" { SyncManagementRequest::Approve { request_id } } else if tool == "sync.reject_pairing" { SyncManagementRequest::Reject { request_id } } else { SyncManagementRequest::ClearExpiredRequest { request_id } };
+            let operation_id = host.begin_control_operation(tool, current_ms())?;
+            spawn_diagnostics_sync_action(app, host, tool, operation_id.clone(), action);
+            Ok(json!({ "accepted": true, "tool": tool, "operation_id": operation_id }))
+        }
+        "sync.pause" | "sync.resume" | "sync.revoke_device" => {
+            diagnostics_only_keys(params, &["device_id"])?;
+            let device_id = diagnostics_required_identifier(params, "device_id")?;
+            let action = if tool == "sync.pause" { SyncManagementRequest::Pause { device_id } } else if tool == "sync.resume" { SyncManagementRequest::Resume { device_id } } else { SyncManagementRequest::Revoke { device_id } };
+            let operation_id = host.begin_control_operation(tool, current_ms())?;
+            spawn_diagnostics_sync_action(app, host, tool, operation_id.clone(), action);
+            Ok(json!({ "accepted": true, "tool": tool, "operation_id": operation_id }))
+        }
+        "sync.refresh" => {
+            if !params.is_empty() { return Err(DiagnosticsError::InvalidParams); }
+            let operation_id = host.begin_control_operation(tool, current_ms())?;
+            spawn_diagnostics_sync_action(app, host, tool, operation_id.clone(), SyncManagementRequest::Status);
+            Ok(json!({ "accepted": true, "tool": tool, "operation_id": operation_id }))
+        }
+        _ => Err(DiagnosticsError::ToolUnavailable),
+    }
+}
+
+fn spawn_diagnostics_sync_action(app: AppHandle, host: DiagnosticsHost, tool: &str, operation_id: String, action: SyncManagementRequest) {
+    let tool = tool.to_owned();
+    tauri::async_runtime::spawn(async move {
+        let control = app.state::<SyncControl>();
+        let result = sync_devices(app.clone(), Some(action), control).await;
+        host.complete_control_operation(&operation_id, result.is_ok(), current_ms());
+        let payload = match result { Ok(snapshot) => json!({ "tool": tool, "operation_id": operation_id, "ok": true, "snapshot": snapshot }), Err(error) => json!({ "tool": tool, "operation_id": operation_id, "ok": false, "error": error }) };
+        let _ = app.emit("diagnostics-control-result", payload);
+    });
+}
+
+fn hex_bytes(bytes: &[u8]) -> String { bytes.iter().map(|byte| format!("{byte:02x}")).collect() }
+
+fn register_mdns_primary(primary_id: &str, certificate_pin: &str, endpoint: &str) -> Result<MdnsAdvertisement, String> {
+    let port = endpoint.rsplit(':').next().and_then(|value| value.parse::<u16>().ok()).ok_or_else(|| "mDNS cannot read the primary port".to_string())?;
+    let short_id: String = primary_id.chars().filter(|ch| ch.is_ascii_alphanumeric()).take(10).collect();
+    let short_id = if short_id.is_empty() { "primary".into() } else { short_id };
+    let instance = format!("kimo-token-{short_id}");
+    let hostname = format!("kimo-token-{short_id}.local.");
+    let properties = vec![("v".to_string(), "1".to_string()), ("proto".to_string(), "tokenme-device-sync/1".to_string()), ("role".to_string(), "primary".to_string()), ("id".to_string(), primary_id.to_string()), ("name".to_string(), usage_index::hostname()), ("pin".to_string(), format!("sha256:{certificate_pin}")), ("caps".to_string(), "pair,upload".to_string())];
+    // addr_auto lets mdns-sd enumerate the interfaces itself, and on this
+    // Windows test machine that enumeration advertised a WSL vEthernet
+    // address plus three link-local v6 addresses while skipping the real LAN
+    // IPv4 — a remote peer resolved the service to an unreachable address
+    // (wire dump: A=172.26.224.1, AAAA=fe80::…, no 10.0.0.112 record). The
+    // endpoint host is the address the user picked, or the default-route one
+    // infer_advertise_host found, so register exactly that address and fall
+    // back to addr_auto only when the host is a name mdns-sd must resolve.
+    let without_scheme = endpoint.strip_prefix("https://").unwrap_or(endpoint);
+    let without_port = without_scheme.rsplit_once(':').map(|(host, _)| host).unwrap_or(without_scheme);
+    let unbracketed = without_port.trim_start_matches('[').trim_end_matches(']');
+    let advertise_ip = unbracketed.parse::<std::net::IpAddr>().ok();
+    let daemon = ServiceDaemon::new().map_err(|error| format!("mDNS unavailable: {error}"))?;
+    let service = match advertise_ip {
+        Some(ip) => ServiceInfo::new(MDNS_SERVICE_TYPE, &instance, &hostname, &ip.to_string(), port, &properties[..]),
+        None => ServiceInfo::new(MDNS_SERVICE_TYPE, &instance, &hostname, "", port, &properties[..]).map(|service| service.enable_addr_auto()),
+    }
+    .map_err(|error| format!("mDNS service is invalid: {error}"))?;
+    daemon.register(service).map_err(|error| format!("mDNS registration failed: {error}"))?;
+    let fullname = format!("{instance}.{MDNS_SERVICE_TYPE}");
+    let monitor_error = Arc::new(Mutex::new(None));
+    let error_for_thread = Arc::clone(&monitor_error);
+    let monitor = daemon.monitor().ok().map(|events| thread::spawn(move || {
+        loop {
+            match events.recv() {
+                Ok(event) => {
+                    let event_name = match event {
+                        DaemonEvent::Announce(_, _) => "announce",
+                        DaemonEvent::Error(_) => "error",
+                        DaemonEvent::IpAdd(_) => "ip_add",
+                        DaemonEvent::IpDel(_) => "ip_del",
+                        DaemonEvent::NameChange(_) => "name_change",
+                        DaemonEvent::Respond(_) => "respond",
+                        _ => "other",
+                    };
+                    eprintln!("kimo-token sync mDNS: event={event_name}");
+                }
+                Err(_) => {
+                    if let Ok(mut slot) = error_for_thread.lock() { *slot = Some(mdns_permission_hint("mDNS monitor stopped")); }
+                    eprintln!("kimo-token sync mDNS: event=monitor_stopped");
+                    break;
+                }
+            }
+        }
+    }));
+    Ok(MdnsAdvertisement { daemon, fullname, monitor, error: monitor_error })
+}
+
+fn mdns_permission_hint(detail: &str) -> String {
+    detail.to_string()
+}
+
+fn is_loopback_advertise_host(value: &str) -> bool {
+    let host = value.trim().trim_start_matches('[').trim_end_matches(']');
+    host.eq_ignore_ascii_case("localhost") || host.eq_ignore_ascii_case("localhost.") || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+}
+
+/// True when a persisted advertise address is an IP this machine no longer
+/// holds. DHCP re-assignments used to strand the primary forever on a dead
+/// address — every start re-persisted the stale host, and secondaries kept
+/// dialing an IP that answered nobody. Hostnames are left alone (they
+/// resolve dynamically); loopback is never stale.
+fn advertise_host_is_stale(host: &str) -> bool {
+    let Ok(ip) = host.trim().parse::<std::net::IpAddr>() else { return false };
+    if ip.is_loopback() || ip.is_unspecified() { return false; }
+    if_addrs::get_if_addrs()
+        .map(|interfaces| !interfaces.iter().any(|iface| iface.addr.ip() == ip))
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod advertise_host_tests {
+    use super::{advertise_host_is_stale, infer_advertise_host};
+
+    #[test]
+    fn loopback_and_hostnames_are_never_stale() {
+        assert!(!advertise_host_is_stale("127.0.0.1"));
+        assert!(!advertise_host_is_stale("my-pc.local"));
+        // A hardcoded address breaks on the next DHCP reassignment; whatever
+        // the default route holds right now is by definition one an
+        // interface answers for.
+        if let Some(ip) = infer_advertise_host() {
+            assert!(!advertise_host_is_stale(&ip), "{ip} is held by an interface");
+        }
+    }
+
+    #[test]
+    fn an_ip_no_interface_holds_is_stale() {
+        // TEST-NET-3 (203.0.113.0/24) is reserved and never assigned here.
+        assert!(advertise_host_is_stale("203.0.113.7"));
+    }
+}
+
+fn infer_advertise_host() -> Option<String> {
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect(("8.8.8.8", 80)).ok()?;
+    let address = socket.local_addr().ok()?.ip();
+    (!address.is_loopback() && !address.is_unspecified()).then(|| address.to_string())
+}
+
+fn merge_discovered_primary(results: &mut Vec<DiscoveredPrimaryView>, candidate: DiscoveredPrimaryView) {
+    if let Some(existing) = results.iter_mut().find(|item| item.primary_id == candidate.primary_id) {
+        if existing.certificate_pin != candidate.certificate_pin { existing.identity_conflict = true; }
+        return;
+    }
+    results.push(candidate);
+}
+
+fn apply_discovery_result(state: &mut SyncControlState, result: Result<Vec<DiscoveredPrimaryView>, String>, started: Instant) {
+    // A new discovery attempt supersedes a failed pairing attempt; do not
+    // carry that stale error back into the discovery sheet snapshot.
+    state.last_error = None;
+    match result {
+        Ok(primaries) => {
+            let result_count = primaries.len();
+            state.discovered_primaries = primaries;
+            state.discovery_error = None;
+            state.phase = SyncPhase::Success;
+            eprintln!("kimo-token sync: action=discover duration_ms={} result_count={} outcome=ok", started.elapsed().as_millis(), result_count);
+        }
+        Err(error) => {
+            state.discovered_primaries.clear();
+            state.discovery_error = Some(mdns_permission_hint(&error));
+            state.phase = SyncPhase::Error;
+            eprintln!("kimo-token sync: action=discover duration_ms={} result_count=0 outcome=error", started.elapsed().as_millis());
+        }
+    }
+}
+
+/// Preference order for the endpoint an advertisement resolves to: a global
+/// IPv4 first (the shape the invite UI and the TLS transport are exercised
+/// against), then a global/ULA IPv6, then the link-scope addresses — IPv4's
+/// plain 169.254 beats IPv6's fe80, whose zone-suffixed string ([…%14]) is
+/// only meaningful on the resolving machine. Loopback and unspecified are
+/// filtered before ranking.
+fn advertised_address_rank(ip: std::net::IpAddr) -> u8 {
+    match ip {
+        std::net::IpAddr::V4(v4) => if v4.is_link_local() { 2 } else { 0 },
+        std::net::IpAddr::V6(v6) => {
+            let segment = v6.segments()[0];
+            let routable = (0x2000..=0x3fff).contains(&segment) || (0xfc00..=0xfdff).contains(&segment);
+            if routable { 1 } else { 3 }
+        }
+    }
+}
+
+/// Discovery = mDNS (fast, same-subnet) + the active subnet sweep (slower,
+/// reaches across routers where multicast cannot). Both run concurrently and
+/// the results merge by primary id — mDNS wins the richer fields, the sweep
+/// fills in every subnet mDNS cannot reach.
+fn discover_primaries() -> Result<Vec<DiscoveredPrimaryView>, String> {
+    const SYNC_PORT: u16 = 47_821;
+    let stop = Arc::new(AtomicBool::new(false));
+    let sweep = thread::spawn(move || {
+        usage_device_sync::discovery::sweep_local_primaries(
+            SYNC_PORT, Duration::from_millis(300), 96, Duration::from_secs(3), &stop,
+        )
+    });
+    let mdns = discover_mdns_primaries();
+    let swept = sweep.join().unwrap_or_default();
+    let mdns_failed = mdns.is_err();
+    let mut results = mdns.unwrap_or_default();
+    for found in swept {
+        merge_discovered_primary(&mut results, DiscoveredPrimaryView {
+            service_name: "kimo-token".into(),
+            primary_id: found.primary_id,
+            display_name: found.display_name,
+            endpoint: format!("https://{}:{SYNC_PORT}", found.address),
+            certificate_pin: found.certificate_pin,
+            identity_conflict: false,
+        });
+    }
+    if results.is_empty() && mdns_failed {
+        Err("mDNS and the subnet sweep found no primary".into())
+    } else {
+        Ok(results)
+    }
+}
+
+fn discover_mdns_primaries() -> Result<Vec<DiscoveredPrimaryView>, String> {
+    let daemon = ServiceDaemon::new().map_err(|error| format!("mDNS unavailable: {error}"))?;
+    let receiver = daemon.browse(MDNS_SERVICE_TYPE).map_err(|error| format!("mDNS browse failed: {error}"))?;
+    let deadline = Instant::now() + Duration::from_millis(1500);
+    let mut results = Vec::new();
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        match receiver.recv_timeout(remaining) {
+            Ok(ServiceEvent::ServiceResolved(service)) => {
+                if service.get_property_val_str("v") != Some("1") || service.get_property_val_str("proto") != Some("tokenme-device-sync/1") || service.get_property_val_str("role") != Some("primary") || !service.get_property_val_str("caps").is_some_and(|caps| caps.split(',').any(|cap| cap == "pair") && caps.split(',').any(|cap| cap == "upload")) { continue; }
+                let Some(primary_id) = service.get_property_val_str("id") else { continue; };
+                let Some(pin) = service.get_property_val_str("pin") else { continue; };
+                if !pin.strip_prefix("sha256:").is_some_and(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))) { continue; }
+                // The responder answers with its whole address set. A link-local
+                // IPv6 only reaches a peer when the zone index happens to line
+                // up — the self-discovery probe here resolved to fe80::…%14 and
+                // a cross-machine pairing would have dialled that dead string —
+                // so rank a routable address first and keep link-local as the
+                // last resort instead of taking the set's first entry.
+                let Some(address) = service.get_addresses().iter()
+                    .filter(|candidate| { let ip = candidate.to_ip_addr(); !ip.is_loopback() && !ip.is_unspecified() })
+                    .min_by_key(|candidate| advertised_address_rank(candidate.to_ip_addr()))
+                else { continue; };
+                let address = address.to_string();
+                let endpoint = if address.contains(':') { format!("https://[{address}]:{}", service.port) } else { format!("https://{address}:{}", service.port) };
+                let certificate_pin = pin.strip_prefix("sha256:").unwrap_or(pin).to_string();
+                let service_name = service.fullname.split('.').next().unwrap_or("kimo-token").to_string();
+                merge_discovered_primary(&mut results, DiscoveredPrimaryView {
+                    service_name,
+                    primary_id: primary_id.to_string(),
+                    display_name: service.get_property_val_str("name").unwrap_or("kimo-token primary").to_string(),
+                    endpoint,
+                    certificate_pin,
+                    identity_conflict: false,
+                });
+            }
+            Ok(ServiceEvent::SearchStopped(_)) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    let _ = daemon.stop_browse(MDNS_SERVICE_TYPE);
+    let _ = daemon.shutdown();
+    Ok(results)
+}
+
+fn advertised_endpoint_host(value: &str, _allow_lan: bool) -> Result<String, String> {
+    let host = value.trim().trim_start_matches('[').trim_end_matches(']').to_string();
+    if host.is_empty() || host.contains('/') || host.contains('?') || host.contains('#') {
+        return Err("sync advertise host is invalid".into());
+    }
+    if _allow_lan && is_loopback_advertise_host(&host) {
+        return Err("sync advertise host must be reachable; localhost and loopback addresses are not valid".into());
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if ip.is_unspecified() {
+            return Err("sync advertise host must be reachable; unspecified addresses such as 0.0.0.0 are not valid".into());
+        }
+        return Ok(match ip {
+            std::net::IpAddr::V6(_) => format!("[{host}]"),
+            std::net::IpAddr::V4(_) => host,
+        });
+    }
+    if host.contains(':') { return Err("sync advertise host is invalid".into()); }
+    Ok(host)
+}
+
+fn parse_pin(value: &str) -> Result<[u8; 32], String> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("pairing certificate pin must be exactly 64 hexadecimal characters".into());
+    }
+    let mut pin = [0u8; 32];
+    for (index, slot) in pin.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
+            .map_err(|_| "pairing certificate pin is invalid".to_string())?;
+    }
+    Ok(pin)
+}
+
+fn sync_snapshot(state: &mut SyncControlState, diagnostics_app: Option<AppHandle>, recover_pairing: bool) -> Result<SyncDevicesView, String> {
+    reap_service(state);
+    reap_runtime(state);
+    if let Some(error) = state.service.as_ref().and_then(|service| service.mdns.as_ref()).and_then(|mdns| mdns.error.lock().ok().and_then(|slot| slot.clone())) {
+        state.discovery_error = Some(error);
+    }
+    let index_path = sync_index_path()?;
+    // One state read and one index read answer the whole poll: role configs,
+    // registry and snapshot cursors. Opening each field through
+    // its own connection queued every five-second tick behind writers ~10 times.
+    let panel = SyncStore::read_panel_state(&index_path)
+        .map_err(|error| format!("cannot read device sync state: {error}"))?;
+    let mut secondary_config = panel.secondary_config.clone();
+    let primary_config = panel.primary_config.clone();
+    if let Some(config) = secondary_config.clone() {
+        if panel.disconnect_requested {
+            // Migrate a stop requested by an older build. Nothing in production
+            // writes this flag any more, and the poll mutex must never wait on
+            // a full index open — tear down state-only and let the recovery
+            // loop's notice sweep handle any residue.
+            stop_service(state);
+            SyncStore::clear_secondary_config_state(&index_path, &config.primary_id, &config.device_id)
+                .map_err(|error| error.to_string())?;
+            clear_secondary_state(state);
+            secondary_config = None;
+        }
+    }
+    let pending_pairing = if secondary_config.is_none() { read_pending_pairing()? } else { None };
+    // The start worker persists its config before it registers the service,
+    // so a status poll in that window would see a role row with no service
+    // and try to start a listener/runtime a second time — against the port
+    // the worker already bound. `primary_starting` marks that window for both
+    // restore paths: a primary being started must not resurrect a secondary
+    // binding either.
+    let restore_secondary = !state.primary_starting
+        && secondary_config.is_some()
+        && (state.role.is_empty() || (state.role == "secondary" && state.runtime.is_none()));
+    if restore_secondary {
+        if let Some(config) = &secondary_config {
+            state.role = "secondary".into();
+            state.primary_id = Some(config.primary_id.clone());
+            state.endpoint = Some(config.endpoint.clone());
+            state.certificate_pin = Some(hex_bytes(&config.certificate_pin));
+            state.last_error = config.last_error.clone();
+            if config.enabled && state.runtime.is_none() {
+                if let Err(error) = start_secondary_runtime(state) {
+                    state.last_error = Some(error);
+                    state.phase = SyncPhase::Error;
+                    if let Ok(mut store) = SyncStore::open(&index_path, config.primary_id.clone()) {
+                        let now = current_ms();
+                        let _ = store.set_secondary_last_error(state.last_error.as_deref(), now);
+                    }
+                } else {
+                    state.phase = SyncPhase::Success;
+                }
+            }
+        }
+    }
+    // The worker flag guard: the pending file was written before the worker's
+    // network send while the shared role was still empty, so a resume here
+    // would re-send the same request concurrently under the control mutex.
+    if recover_pairing && state.role.is_empty() && !state.pending_pairing_attempted && !state.pairing_worker_in_flight {
+        if let Some(pending) = pending_pairing {
+            state.pending_pairing_attempted = true;
+            if let Err(error) = resume_pending_pairing(state, &index_path, pending) {
+                state.last_error = Some(error);
+                state.phase = SyncPhase::Error;
+            } else {
+                state.phase = SyncPhase::Success;
+            }
+        }
+    }
+    // The start worker persists its config before it registers the service,
+    // so a status poll in that window would see a role row with no service
+    // and try to start the listener a second time — against the port the
+    // worker already bound. `primary_starting` marks that window.
+    let restore_primary = !state.primary_starting
+        && primary_config.is_some()
+        && (state.role.is_empty() || (state.role == "primary" && state.service.is_none()));    if restore_primary {
+        if let Some(config) = &primary_config {
+            state.role = "primary".into();
+            state.primary_id = Some(config.primary_id.clone());
+            state.endpoint = primary_endpoint(config);
+            if config.enabled && state.service.is_none() {
+                if let Err(error) = start_primary(state, Some(config.bind_addr.clone()), config.advertise_host.clone(), config.allow_lan, diagnostics_app.clone()) {
+                    state.last_error = Some(error);
+                    state.phase = SyncPhase::Error;
+                } else {
+                    state.phase = SyncPhase::Success;
+                }
+            }
+        }
+    }
+    // A previous secondary transport failure can outlive an explicit unpair
+    // or a role switch in the in-memory control state. Do not attach that old
+    // error to a genuinely unconfigured snapshot; the setup page should start
+    // clean and let the next pairing attempt report its own result.
+    if state.role.is_empty() && secondary_config.is_none() && primary_config.is_none() && read_pending_pairing()?.is_none() {
+        state.last_error = None;
+        if state.phase == SyncPhase::Error { state.phase = SyncPhase::Idle; }
+    }
+    if state.runtime.is_some() {
+        // The runtime can clear its persisted error between the first config
+        // read and this snapshot. Re-read before publishing the UI state so a
+        // successful retry cannot leave the previous transport error visible.
+        secondary_config = SyncStore::read_secondary_config(&index_path)
+            .map_err(|error| format!("cannot refresh secondary sync configuration: {error}"))?;
+    }
+    if state.role == "secondary" {
+        state.last_error = secondary_config.as_ref().and_then(|config| config.last_error.clone());
+        if state.last_error.is_none() && state.runtime.as_ref().is_some_and(|runtime| runtime.join.as_ref().is_none_or(|join| !join.is_finished())) {
+            if state.phase == SyncPhase::Error { state.phase = SyncPhase::Success; }
+        }
+    }
+    if state.role == "primary" {
+        if state.service.as_ref().is_some_and(|service| matches!(service.diagnostics.health(), "ready" | "running") && service.join.as_ref().is_none_or(|join| !join.is_finished())) {
+            state.last_error = None;
+            if state.phase == SyncPhase::Error { state.phase = SyncPhase::Success; }
+        }
+    }
+    let snapshot = panel.status.clone();
+    let primary_id = state.primary_id.clone().or(snapshot.primary_id.clone()).or_else(|| secondary_config.as_ref().map(|config| config.primary_id.clone()));
+    let endpoint = state.endpoint.clone()
+        .or_else(|| secondary_config.as_ref().map(|config| config.endpoint.clone()))
+        .or_else(|| primary_config.as_ref().and_then(primary_endpoint));
+    let certificate_pin = state.certificate_pin.clone().or_else(|| secondary_config.as_ref().map(|config| hex_bytes(&config.certificate_pin)));
+    let service_health = state.service.as_ref().map(|service| service.diagnostics.health().to_string())
+        .or_else(|| state.runtime.as_ref().map(|runtime| if runtime.join.as_ref().is_some_and(JoinHandle::is_finished) { "stopped".into() } else { "running".into() }))
+        .or_else(|| (!state.role.is_empty()).then(|| "stopped".into()));
+    let stream_id = secondary_config.as_ref().and_then(|config| config.stream_id.clone());
+    let data_epoch = secondary_config.as_ref().and_then(|config| config.data_epoch);
+    let upload_complete = secondary_config.as_ref().and(panel.upload_complete);
+    let download_complete = secondary_config.as_ref().and(panel.download_complete);
+    let upload_complete_at_ms = secondary_config.as_ref().and(panel.upload_complete_at_ms);
+    let download_complete_at_ms = secondary_config.as_ref().and(panel.download_complete_at_ms);
+    let last_error = if state.role == "secondary" {
+        secondary_config.as_ref().and_then(|config| config.last_error.clone())
+    } else {
+        state.last_error.clone().or_else(|| secondary_config.as_ref().and_then(|config| config.last_error.clone()))
+    };
+    state.last_checked_at_ms = Some(current_ms());
+    let pairing_pending = secondary_config.is_none() && read_pending_pairing()?.is_some();
+    let primary_data_sharing_enabled = primary_config.as_ref().is_some_and(|config| config.share_data_with_secondaries);
+    let primary_auto_approve_enabled = primary_config.as_ref().is_some_and(|config| config.auto_approve_pairing);
+    let view = SyncDevicesView {
+        primary_id,
+        primary_link_live: primary_link_fresh(),
+        sessions_since_boot: sessions_since_boot().load(std::sync::atomic::Ordering::Relaxed),
+        presence_window_ms: DEVICE_LIVE_TTL_MS,
+        primary_display_name: secondary_config.as_ref().and_then(|config| config.primary_display_name.clone()),
+        primary_os: secondary_config.as_ref().and_then(|config| config.primary_os.clone()),
+        role: if state.role.is_empty() { "unconfigured".into() } else { state.role.clone() },
+        service_running: state.service.is_some() || state.runtime.is_some(),
+        primary_starting: state.primary_starting,
+        primary_data_sharing_enabled,
+        primary_auto_approve_enabled,
+        service_health,
+        endpoint,
+        certificate_pin,
+        stream_id,
+        data_epoch,
+        upload_complete,
+        download_complete,
+        upload_complete_at_ms,
+        download_complete_at_ms,
+        last_error,
+        discovery_error: state.discovery_error.clone(),
+        last_connected_at_ms: secondary_config.as_ref().and_then(|config| config.last_connected_at_ms),
+        operation_state: state.phase.as_str().into(),
+        last_checked_at_ms: state.last_checked_at_ms,
+        invite_url: state.invite_url.clone(),
+        invite_expires_at_ms: state.invite_expires_at_ms,
+        pairing_pending,
+        discovered_primaries: state.discovered_primaries.clone(),
+        devices: {
+            let mut devices: Vec<SyncDeviceView> = snapshot.devices.into_iter().map(sync_device_view).collect();
+            if (state.role == "secondary" || (state.role.is_empty() && secondary_config.is_some())) && secondary_config.is_some() {
+                if let Some(config) = &secondary_config {
+                    let primary_origin = config.primary_display_name.clone().unwrap_or_else(|| config.primary_id.clone());
+                    let primary_display_name = config.primary_display_name.clone().unwrap_or_else(|| "Primary".into());
+                    let primary_device = SyncDeviceView {
+                        device_id: config.primary_id.clone(),
+                        origin: primary_origin,
+                        display_name: primary_display_name,
+                        os: "macOS".into(),
+                        role: "primary".into(),
+                        status: if state.runtime.is_some() { "paired".into() } else { "paused".into() },
+                        data_epoch: config.data_epoch.unwrap_or(0),
+                        active_stream_id: config.stream_id.clone(),
+                        last_generation: None,
+                        last_merged_at_ms: config.last_connected_at_ms,
+                        snapshot_complete: panel.download_complete.unwrap_or(false),
+                        live: primary_link_fresh(),
+                    };
+                    if !devices.iter().any(|d| d.device_id == config.primary_id) {
+                        devices.insert(0, primary_device);
+                    }
+                }
+            }
+            devices
+        },
+        pairing_requests: snapshot.pairing_requests,
+    };
+    notify_sync_transitions(&view);
+    Ok(view)
+}
+
+/// Restore an explicitly enabled sync role at boot. `enabled=false` is not an
+/// intentional user stop any more — a user stop deletes the config row (the
+/// Stop arm) — it is the runtime's self-disable after a terminal error
+/// (revoked/rejected/expired), and the retry button revives it; the restore
+/// itself still must not autostart such a config.
+/// The restore snapshot can wait behind the ingest engine's index.db write
+/// lock for the whole of `store_open`/`persist_config` (23 s measured while
+/// it still ran on the main thread during setup), so the snapshot must never
+/// run inline here: kick the same locked-state restore the recovery loop
+/// performs onto a worker and return immediately. `ensure_sync_recovery_loop`
+/// is started first so its periodic tick re-arms anything the one-shot misses;
+/// `start_primary`/`start_secondary_runtime` are idempotent behind the
+/// control-state mutex, and a webview `sync_devices` read simply queues on
+/// that mutex until the restore finishes, so overlap is a wait, not a race.
+pub fn restore_sync_on_launch(app: &tauri::AppHandle) {
+    ensure_sync_recovery_loop(app);
+    let Some(control) = app.try_state::<SyncControl>() else { return; };
+    let state_ref = Arc::clone(&control.state);
+    let worker_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(mut state) = state_ref.lock() else { return; };
+        if let Err(error) = sync_snapshot(&mut state, Some(worker_app), true) {
+            state.last_error = Some(error);
+            state.phase = SyncPhase::Error;
+        }
+    });
+}
+
+fn rearm_pending_pairing_retry(state: &mut SyncControlState) {
+    // A pairing worker owns the pending file between its pre-check and its
+    // final locked commit; re-arming mid-flight would let this tick resume
+    // the very request the worker is sending right now.
+    if state.pairing_worker_in_flight { return; }
+    state.pending_pairing_attempted = false;
+}
+
+fn ensure_sync_recovery_loop(app: &AppHandle) {
+    let Some(control) = app.try_state::<SyncControl>() else { return; };
+    let Ok(mut state) = control.state.lock() else { return; };
+    if state.recovery.is_some() { return; }
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_stop = Arc::clone(&stop);
+    let state_ref = Arc::downgrade(&control.state);
+    let disconnect_delivery = Arc::clone(&state.disconnect_delivery);
+    let pending_disconnect_writes = Arc::clone(&state.pending_disconnect_writes);
+    let app = app.clone();
+    let join = thread::spawn(move || {
+        while !thread_stop.load(Ordering::Acquire) {
+            let deadline = Instant::now() + SYNC_RECOVERY_INTERVAL;
+            while Instant::now() < deadline {
+                if thread_stop.load(Ordering::Acquire) { return; }
+                thread::sleep(Duration::from_millis(100));
+            }
+            let Some(state_ref) = state_ref.upgrade() else { return; };
+            if let Ok(index_path) = sync_index_path() {
+                // A crash between "config deleted" and "notice queued" leaves this file;
+// re-arm its work into the slot the drain below empties.
+            let ghost_path = sync_dir().ok().map(|dir| dir.join("pending-disconnect.json"));
+            if let Some(ghost_path) = ghost_path {
+                if let Ok(bytes) = std::fs::read(&ghost_path) {
+                    if let Ok(write) = serde_json::from_slice::<PendingDisconnectWrite>(&bytes) {
+                        if let Ok(mut slot) = pending_disconnect_writes.lock() {
+                            if !slot.iter().any(|w| w.config.device_id == write.config.device_id) {
+                                slot.push(write);
+                                let _ = std::fs::remove_file(&ghost_path);
+                            }
+                        }
+                    }
+                }
+            }
+            drain_pending_disconnect_writes(&index_path, &pending_disconnect_writes, &disconnect_delivery);
+                let delivery = disconnect_delivery.lock();
+                if delivery.is_ok() && retry_disconnect_notifications(&index_path).is_err() {
+                    crate::logging::info("sync: action=disconnect_notify outcome=error error_code=retry_state");
+                }
+            }
+            let recovered_endpoint = sync_index_path().ok().and_then(|path| rediscover_secondary_endpoint(&path));
+            let Ok(mut state) = state_ref.lock() else { return; };
+            let visible_before = (state.role.clone(), state.service.is_some(), state.runtime.is_some());
+            if let Some((config, endpoint)) = recovered_endpoint {
+                if let Ok(index_path) = sync_index_path() {
+                    if let Ok(mut store) = SyncStore::open(index_path, config.primary_id.clone()) {
+                        if store.update_secondary_endpoint(&config.device_id, &config.endpoint, &endpoint, current_ms()).unwrap_or(false) {
+                            stop_service(&mut state);
+                            crate::logging::info("sync: action=rediscover_endpoint outcome=ok");
+                        }
+                    }
+                }
+            }
+            rearm_pending_pairing_retry(&mut state);
+            let recovered = sync_snapshot(&mut state, Some(app.clone()), true);
+            // The tick can start or stop a runtime, resume a pending pairing
+            // or re-hang a listener on its own; push the flip so the badge
+            // does not wait for the next read.
+            if visible_before != (state.role.clone(), state.service.is_some(), state.runtime.is_some()) {
+                let _ = app.emit("sync-updated", ());
+            }
+            if let Err(error) = recovered {
+                state.last_error = Some(error);
+                state.phase = SyncPhase::Error;
+            }
+        }
+    });
+    state.recovery = Some(SyncRecoveryService { stop, join: Some(join) });
+}
+
+/// Tear the current secondary binding (or a pending pairing) down in place:
+/// stop any service, queue the disconnect notice for the old primary, and
+/// clear the local role state. Called only from the pairing pre-check paths:
+/// there the synchronous queue-before-drain ordering against the immediate
+/// re-pair's notice drain is load-bearing — a re-pair moments later must
+/// start clean — so this composition keeps its full `SyncStore::open` on the
+/// caller's thread. The user-initiated Stop/Unpair arms use
+/// `begin_async_secondary_teardown` instead, which moves the index work off
+/// the control-state mutex. Idempotent: a device with neither a config row
+/// nor a pending pairing is left untouched. Re-pairing uses the same helper
+/// so an old binding can never dead-end a new invite.
+fn unpair_secondary_binding(state: &mut SyncControlState, index_path: &std::path::Path) -> Result<(), String> {
+    let config = SyncStore::read_secondary_config(index_path).map_err(|e| e.to_string())?;
+    if let Some(config) = config {
+        stop_service(state);
+        // Deliver the disconnect notice immediately, off the config row before
+        // it is deleted: the primary learns at once instead of on the recovery
+        // loop's next tick, and a re-pair moments later starts clean.
+        let delivery_config = config.clone();
+        let delivery_index = index_path.to_path_buf();
+        thread::spawn(move || {
+            let started = Instant::now();
+            let result = usage_device_sync::deliver_disconnect_notice(&delivery_config, current_ms());
+            let error = result.as_ref().err().map(ToString::to_string);
+            if let Ok(mut store) = SyncStore::open(&delivery_index, delivery_config.primary_id.clone()) {
+                let _ = store.finish_disconnect_notice(&delivery_config.device_id, current_ms(), error.as_deref());
+            }
+            log_sync_action("disconnect_immediate", started, error.as_deref());
+        });
+        SyncStore::open(index_path, config.primary_id.clone()).map_err(|error| error.to_string())?
+            .request_secondary_disconnect(current_ms()).map_err(|error| error.to_string())?;
+        clear_pending_pairing()?;
+    } else if read_pending_pairing()?.is_some() {
+        cancel_pending_pairing(index_path)?;
+        state.pending_pairing_attempted = true;
+    }
+    if SyncStore::read_secondary_config(index_path).map_err(|error| error.to_string())?.is_none() {
+        clear_secondary_state(state);
+    }
+    Ok(())
+}
+
+/// User-initiated teardown (the Stop and Unpair arms): unlike
+/// `unpair_secondary_binding` — whose synchronous queue-before-drain
+/// ordering is load-bearing for the pairing pre-check — this must answer at
+/// click speed, so everything under the control-state mutex stays cheap:
+/// the runtime stop (the interrupt aborts its network leg within one 50 ms
+/// poll slice; the join only waits out the pass's final index writes), the
+/// state-only config delete, the pending-pairing file and the in-memory
+/// role. The index-side half — the network delivery and the full
+/// `SyncStore::open` that queues the notice — moves to one background
+/// thread, where the ingest engine's write lock can hold it without
+/// freezing the sheet's 5 s status poll. The recovery loop tolerates the
+/// in-flight work: a missing config row is the same state the Stop arm
+/// leaves on every exit, and the cleared pending file gives the snapshot's
+/// resume nothing to re-arm.
+fn begin_async_secondary_teardown(state: &mut SyncControlState, index_path: &std::path::Path) -> Result<(), String> {
+    stop_service(state);
+    let config = SyncStore::read_secondary_config(index_path).map_err(|error| error.to_string())?;
+    if let Some(config) = config {
+        // State-only delete: never opens the usage index, so the teardown
+        // cannot queue behind the ingest engine's write lock. The index-side
+        // bookkeeping (disconnect notice, outbox retirement, journal
+        // release, capture mirror) is the thread's concern, on the captured
+        // config — the row it would read is already gone.
+        SyncStore::clear_secondary_config_state(index_path, &config.primary_id, &config.device_id)
+            .map_err(|error| error.to_string())?;
+        clear_pending_pairing()?;
+        let stopped_at_ms = current_ms();
+        let delivery_config = config.clone();
+        // Ghost insurance: the notice lives only in this process's memory
+        // until the background thread queues it, so a crash in between would
+        // leave a paired zombie on the primary. Persist the intent; the
+        // recovery loop drains the file the same way it drains the slot.
+        let ghost_path = sync_dir()?.join("pending-disconnect.json");
+        let ghost_bytes = serde_json::to_vec(&PendingDisconnectWrite { config: config.clone(), queued_at_ms: stopped_at_ms })
+            .map_err(|error| format!("cannot encode pending disconnect: {error}"))?;
+        std::fs::write(&ghost_path, ghost_bytes).map_err(|error| format!("cannot persist pending disconnect: {error}"))?;
+        let delivery_index = index_path.to_path_buf();
+        let pending_writes = Arc::clone(&state.pending_disconnect_writes);
+        let pending_delivery = Arc::clone(&state.disconnect_delivery);
+        let ghost_path_captured = ghost_path.clone();
+        thread::spawn(move || {
+            let started = Instant::now();
+            // The primary learns at once: deliver straight from the captured
+            // config, bounded by the transport's own 1 s + 2 s timeouts.
+            let delivery_error = usage_device_sync::deliver_disconnect_notice(&delivery_config, current_ms())
+                .err().map(|error| error.to_string());
+            log_sync_action("disconnect_immediate", started, delivery_error.as_deref());
+            let outcome = (|| -> Result<(), String> {
+                // A same-identity re-pair makes this write obsolete: queueing
+                // the notice after the user re-paired the same primary would
+                // revoke the fresh binding. The row this delete removed only
+                // exists again if a new pairing wrote it.
+                if let Ok(Some(current)) = SyncStore::read_secondary_config(&delivery_index) {
+                    // Primary-only: a fresh-identity re-pair to the same primary must also void this notice.
+                    if current.primary_id == delivery_config.primary_id { return Ok(()); }
+                }
+                let mut opened = None;
+                for attempt in 0..6 {
+                    if attempt > 0 { thread::sleep(Duration::from_secs(1)); }
+                    if let Ok(store) = SyncStore::open(&delivery_index, delivery_config.primary_id.clone()) { opened = Some(store); break; }
+                }
+                let mut store = opened.ok_or_else(|| "cannot open sync store: index stayed busy".to_string())?;
+                // Serialize the queue against a same-window pairing drain: the
+                // drain must never read an empty notice list while this write
+                // is between its deliver and queue halves.
+                let delivery = Arc::clone(&pending_delivery);
+                let _held = delivery.lock();
+                store.queue_secondary_disconnect(&delivery_config, stopped_at_ms)
+                    .map_err(|error| format!("cannot queue the disconnect notice: {error}"))?;
+                // Record the delivery outcome now that the notice exists: an
+                // ack retires the notice and its payload; a failure
+                // backoff-waits on the queue for the recovery loop's next tick.
+                let _ = store.finish_disconnect_notice(&delivery_config.device_id, current_ms(), delivery_error.as_deref());
+                Ok(())
+            })();
+            if let Err(error) = outcome.as_ref() {
+                // A lost write is a ghost paired device: park the work for
+                // the recovery loop instead of only logging it. The ghost file
+                // stays on disk for a crash in exactly this window.
+                if let Ok(mut slot) = pending_writes.lock() {
+                    slot.push(PendingDisconnectWrite { config: delivery_config, queued_at_ms: stopped_at_ms });
+                }
+                log_sync_action("stop_converge", started, Some(error.as_str()));
+                return;
+            }
+            let _ = std::fs::remove_file(&ghost_path_captured);
+            log_sync_action("stop_converge", started, None);
+        });
+    } else if read_pending_pairing()?.is_some() {
+        // No binding, but a pairing request is on its way out: cancel it so
+        // the recovery loop cannot resume the request this teardown just
+        // abandoned. The file work is cheap; the notice it queues needs the
+        // index, but this branch never had a runtime to stop.
+        cancel_pending_pairing(index_path)?;
+        state.pending_pairing_attempted = true;
+    }
+    if SyncStore::read_secondary_config(index_path).map_err(|error| error.to_string())?.is_none() {
+        clear_secondary_state(state);
+    }
+    Ok(())
+}
+
+fn pair_secondary_with_details(
+    state: &mut SyncControlState,
+    index_path: &std::path::Path,
+    snapshot: &DeviceSyncSnapshot,
+    details: PairingInviteDetails,
+    certificate_der: Vec<u8>,
+    origin: Option<String>,
+    display_name: Option<String>,
+    os: Option<String>,
+) -> Result<(), String> {
+    reap_service(state);
+    if state.service.is_some() { return Err("stop the primary sync service before pairing this device as a secondary".into()); }
+    if state.runtime.is_some() || state.role == "secondary" || SyncStore::read_secondary_config(index_path).map_err(|e| e.to_string())?.is_some() {
+        // This device is on the user's own LAN and re-pairing is meant to be
+        // zero-friction: an old binding (typically revoked on the primary, or
+        // left behind by a rejected pairing) is torn down here instead of
+        // dead-ending the new invite. The retained-identity revival and the
+        // same-primary notice drain below stay in charge of the history.
+        unpair_secondary_binding(state, index_path)?;
+    }
+    let primary_id = details.primary_id.clone().ok_or_else(|| "pairing response did not include the primary id".to_string())?;
+    let primary_display_name = details.primary_display_name.clone();
+    let primary_os = details.primary_os.clone();
+    let certificate_pin = parse_pin(&details.invite.certificate_pin)?;
+    if hash_bytes(&certificate_der) != certificate_pin { return Err("pairing certificate does not match its advertised pin".into()); }
+    let directory = sync_dir()?;
+    // Serialize an old revoke against a new pairing to the same primary. A
+    // delayed notification must never revoke a freshly approved connection.
+    let delivery_lock = Arc::clone(&state.disconnect_delivery);
+    let _delivery = delivery_lock.lock().map_err(|_| "disconnect delivery state is busy".to_string())?;
+    let notices = SyncStore::read_disconnect_notices(index_path, i64::MAX).map_err(|error| error.to_string())?
+        .into_iter().filter(|notice| notice.config.primary_id == primary_id).collect::<Vec<_>>();
+    // Network delivery is intentionally performed before the control-state lock
+    // is acquired by the caller. This helper runs on the pairing worker's
+    // temporary state, never on the shared state mutex.
+    for notice in notices {
+        usage_device_sync::deliver_disconnect_notice(&notice.config, current_ms())
+            .map_err(|error| format!("cannot finish the previous disconnect before re-pairing: {error}"))?;
+        if let Some(bound) = SyncStore::read_status(index_path).map_err(|error| error.to_string())?.primary_id {
+            SyncStore::open(index_path, bound).map_err(|error| error.to_string())?
+                .finish_disconnect_notice(&notice.config.device_id, current_ms(), None).map_err(|error| error.to_string())?;
+        }
+    }
+    // `secondary` is the transport role, not the device name. Use the local
+    // hostname for the persisted data origin and the human-readable label.
+    let local_name = usage_index::hostname();
+    let identity_path = SyncStore::read_retained_identity_path(index_path, &primary_id).map_err(|error| error.to_string())?
+        .unwrap_or_else(|| directory.join(format!("secondary-{}.json", hex_bytes(&hash_bytes(primary_id.as_bytes())))));
+    if identity_path.parent() != Some(directory.as_path()) { return Err("retained secondary identity is outside the sync directory".into()); }
+    let display_name = display_name.unwrap_or_else(|| local_name.clone());
+    let mut identity = DeviceIdentity::load_or_create(
+        identity_path.clone(), origin.unwrap_or_else(|| local_name.clone()), display_name.clone(),
+    ).map_err(|e| e.to_string())?;
+    identity.display_name = display_name;
+    let request = PairingRequest::new(&details.invite, &identity, os.unwrap_or_else(|| std::env::consts::OS.into())).map_err(|e| e.to_string())?;
+    let server_name = details.server_name.unwrap_or_else(|| "localhost".into());
+    let pending = PendingPairing {
+        request,
+        primary_id: primary_id.clone(),
+        primary_display_name: primary_display_name.clone(),
+        primary_os: primary_os.clone(),
+        endpoint: details.invite.endpoint.clone(),
+        server_name: server_name.clone(),
+        certificate_der: certificate_der.clone(),
+        certificate_pin,
+        identity_path: Some(identity_path.clone()),
+    };
+    // Persist before the network write. The same request_id is idempotent on
+    // the primary, so a crash after acceptance can be retried safely.
+    write_pending_pairing(&pending)?;
+    if let Err(error) = send_pending_pairing(&state.interrupt, &pending) {
+        return Err(error);
+    }
+    let config = SecondarySyncConfig {
+        primary_id: primary_id.clone(), primary_display_name, primary_os, device_id: identity.device_id.clone(), origin: identity.origin.clone(),
+        endpoint: details.invite.endpoint.clone(), server_name, certificate_der, certificate_pin,
+        identity_path, stream_id: None, data_epoch: None, expected_generation: None, enabled: true, capture_enabled: true,
+        last_error: None, last_manifest_hash: None, last_gzip_hash: None, last_connected_at_ms: None,
+        last_ack_generation: None, last_ack_receipt_hash: None,
+    };
+    let current_primary_id = snapshot.primary_id.clone().or_else(|| state.primary_id.clone()).unwrap_or_else(|| primary_id.clone());
+    let mut store = SyncStore::open(index_path, current_primary_id).map_err(|error| error.to_string())?;
+    store.transition_to_secondary(&config, current_ms()).map_err(|error| error.to_string())?;
+    drop(store);
+    clear_pending_pairing()?;
+    state.role = "secondary".into();
+    state.primary_id = Some(primary_id.clone());
+    state.endpoint = Some(details.invite.endpoint);
+    state.certificate_pin = Some(hex_bytes(&certificate_pin));
+    state.last_error = None;
+    match start_secondary_runtime(state) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let mut rollback = SyncStore::open(index_path, primary_id).map_err(|open_error| open_error.to_string())?;
+            let _ = rollback.set_secondary_last_error(Some(error.as_str()), current_ms());
+            Err(error)
+        }
+    }
+}
+
+fn resume_pending_pairing(state: &mut SyncControlState, index_path: &std::path::Path, pending: PendingPairing) -> Result<(), String> {
+    let directory = sync_dir()?;
+    let identity_path = pending.identity_path.clone().unwrap_or_else(|| directory.join("secondary-identity.json"));
+    let identity = DeviceIdentity::load_or_create(
+        identity_path.clone(), pending.request.origin.clone(), pending.request.display_name.clone(),
+    ).map_err(|error| format!("cannot load pending secondary identity: {error}"))?;
+    if identity.device_id != pending.request.device_id || identity.origin != pending.request.origin {
+        return Err("pending pairing identity does not match the stored request".into());
+    }
+    let terminal = |error: String| {
+        // A terminal answer (rejected/expired/revoked) fails every future
+        // resume; clear the orphan pending file so the recovery loop stops
+        // re-arming a request that can never succeed. The scan page's error
+        // banner tells the story; a fresh scan starts a clean pairing.
+        if ["was rejected", "expired", "revoked"].iter().any(|mark| error.contains(mark)) {
+            let _ = clear_pending_pairing();
+        }
+        error
+    };
+    let pending = match send_pending_pairing(&state.interrupt, &pending) {
+        Ok(()) => pending,
+        Err(error) if pairing_invite_needs_renewal(&error) => {
+            let renewed = renew_pending_pairing(&state.interrupt, &pending, &identity)?;
+            write_pending_pairing(&renewed)?;
+            send_pending_pairing(&state.interrupt, &renewed).map_err(terminal)?;
+            renewed
+        }
+        Err(error) => return Err(terminal(error)),
+    };
+    let bound = SyncStore::read_status(index_path).map_err(|error| error.to_string())?.primary_id.unwrap_or_else(|| pending.primary_id.clone());
+    let mut store = SyncStore::open(index_path, bound).map_err(|error| error.to_string())?;
+    let config = SecondarySyncConfig {
+        primary_id: pending.primary_id.clone(), primary_display_name: pending.primary_display_name.clone(), primary_os: pending.primary_os.clone(), device_id: identity.device_id.clone(), origin: identity.origin.clone(),
+        endpoint: pending.endpoint.clone(), server_name: pending.server_name.clone(),
+        certificate_der: pending.certificate_der.clone(), certificate_pin: pending.certificate_pin,
+        identity_path, stream_id: None, data_epoch: None, expected_generation: None,
+        enabled: true, capture_enabled: true, last_error: None, last_manifest_hash: None,
+        last_gzip_hash: None, last_connected_at_ms: None, last_ack_generation: None,
+        last_ack_receipt_hash: None,
+    };
+    store.transition_to_secondary(&config, current_ms()).map_err(|error| error.to_string())?;
+    drop(store);
+    clear_pending_pairing()?;
+    state.role = "secondary".into();
+    state.primary_id = Some(pending.primary_id);
+    state.endpoint = Some(pending.endpoint);
+    state.certificate_pin = Some(hex_bytes(&pending.certificate_pin));
+    match start_secondary_runtime(state) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let primary_id = state.primary_id.clone().ok_or_else(|| "pending secondary primary id is missing".to_string())?;
+            let mut rollback = SyncStore::open(index_path, primary_id).map_err(|open_error| open_error.to_string())?;
+            let _ = rollback.set_secondary_last_error(Some(error.as_str()), current_ms());
+            Err(error)
+        }
+    }
+}
+
+/// The primary's current sharing answer for a `DeviceState` push. A failed
+/// read answers `false`: the device stops asking for the downlink until its
+/// next session re-syncs, and never uploads against a sharing-off primary.
+fn primary_sharing_enabled(index_path: &std::path::Path) -> bool {
+    SyncStore::read_primary_config(index_path).ok().flatten().is_some_and(|config| config.share_data_with_secondaries)
+}
+
+/// Best-effort `DeviceState` push onto a device's live upload session, so a
+/// revoke/pause/resume or a sharing flip reaches the secondary instantly
+/// instead of on its next (up to 30 s) rollup refusal. The server enqueue is
+/// a no-op when no socket is live — the device re-syncs on its next session
+/// regardless — and the call cannot fail, so the command that triggered it
+/// never does either. Device ids stay out of the log per the panel-log rule.
+fn push_device_state(state: &SyncControlState, device_id: &str, status: &str, data_sharing: bool) {
+    if let Some(service) = state.service.as_ref() {
+        service.diagnostics.push_device_state(device_id, status, data_sharing);
+    }
+}
+
+fn run_sync_action(state: &mut SyncControlState, action: SyncManagementRequest, diagnostics_app: Option<AppHandle>) -> Result<(), String> {
+    let is_status = matches!(&action, SyncManagementRequest::Status);
+    if !is_status { state.phase = SyncPhase::Running; }
+    let result = (|| {
+        let index_path = sync_index_path()?;
+        note_legacy_pairing_state(state, &index_path);
+        let snapshot = SyncStore::read_status(&index_path).map_err(|e| format!("cannot read device sync status: {e}"))?;
+        match action {
+        SyncManagementRequest::Status => {
+            let secondary_error = SyncStore::read_secondary_config(&index_path)
+                .map_err(|error| error.to_string())?
+                .and_then(|config| config.last_error);
+            let service_healthy = state.service.as_ref().is_some_and(|service| matches!(service.diagnostics.health(), "ready" | "running"));
+            let runtime_healthy = state.runtime.as_ref().is_some_and(|runtime| runtime.join.as_ref().is_some_and(|join| !join.is_finished()));
+            if service_healthy || (runtime_healthy && secondary_error.is_none()) {
+                state.last_error = secondary_error;
+                state.phase = SyncPhase::Success;
+            } else if secondary_error.is_some() {
+                state.last_error = secondary_error;
+            }
+            Ok(())
+        },
+        SyncManagementRequest::Discover => {
+            Err("mDNS discovery must run asynchronously".into())
+        }
+        SyncManagementRequest::RetryConnect => {
+            state.last_error = None;
+            state.pending_pairing_attempted = false;
+            let secondary_config = SyncStore::read_secondary_config(&index_path).map_err(|error| error.to_string())?;
+            if let Some(config) = secondary_config {
+                // An explicit retry is the user asking for the service to run
+                // again. Drop the old runtime first: its exiting thread can
+                // still write the self-disable (remember_secondary_error)
+                // after the re-enable below, so join it before touching the
+                // store. Failures are surfaced as real errors — a retry that
+                // only cleared the error reported a fake success with nothing
+                // running.
+                state.runtime.take();
+                let mut store = SyncStore::open(&index_path, config.primary_id.clone()).map_err(|error| error.to_string())?;
+                if !config.enabled {
+                    store.set_secondary_enabled(true, current_ms()).map_err(|error| error.to_string())?;
+                }
+                store.set_secondary_last_error(None, current_ms()).map_err(|error| error.to_string())?;
+                drop(store);
+                if let Err(error) = start_secondary_runtime(state) {
+                    state.last_error = Some(error.clone());
+                    state.phase = SyncPhase::Error;
+                    return Err(error);
+                }
+            }
+            if let Some(pending) = read_pending_pairing()? {
+                // A pairing worker owns the pending file while in flight;
+                // resuming here would re-send the same request concurrently.
+                if !state.pairing_worker_in_flight {
+                    resume_pending_pairing(state, &index_path, pending)?;
+                }
+            }
+            state.phase = SyncPhase::Success;
+            Ok(())
+        }
+        SyncManagementRequest::StartPrimary { bind, advertise_host, allow_lan } => start_primary(state, bind, advertise_host, allow_lan, diagnostics_app),
+        SyncManagementRequest::SetPrimaryDataSharing { enabled } => {
+            if state.role != "primary" { return Err("only the primary can change data sharing".into()); }
+            let config = SyncStore::read_primary_config(&index_path)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "primary sync is not configured".to_string())?;
+            // State-only write: never opens the usage index, so the toggle
+            // cannot queue behind the ingest engine's write lock.
+            SyncStore::write_primary_data_sharing(&index_path, &config.primary_id, enabled, current_ms()).map_err(|error| error.to_string())?;
+            // The flip moves every secondary's downlink gate at once: tell
+            // each paired device on a live session now instead of waiting
+            // for its next rollup refusal. Only a paired device holds a
+            // session (the Auth gate refuses the rest), so only they are
+            // pushed; the write above touches no device rows, so the
+            // snapshot taken on entry is still the registry's truth.
+            for device in &snapshot.devices {
+                if matches!(device.status, DeviceStatus::Paired) { push_device_state(state, &device.device_id, "paired", enabled); }
+            }
+            Ok(())
+        }
+        SyncManagementRequest::SetPrimaryAutoApprove { enabled } => {
+            if state.role != "primary" { return Err("only the primary can change auto-approve".into()); }
+            let config = SyncStore::read_primary_config(&index_path)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "primary sync is not configured".to_string())?;
+            // State-only write for the same reason as the share toggle: the
+            // flip must land at click speed even under the index write lock.
+            SyncStore::write_primary_auto_approve(&index_path, &config.primary_id, enabled, current_ms()).map_err(|error| error.to_string())
+        }
+        SyncManagementRequest::StartSecondary => {
+            let config = SyncStore::read_secondary_config(&index_path)
+                .map_err(|error| format!("cannot read secondary sync configuration: {error}"))?
+                .ok_or_else(|| "pair this device before starting secondary sync".to_string())?;
+            let primary_id = config.primary_id.clone();
+            let mut store = SyncStore::open(&index_path, primary_id.clone()).map_err(|error| error.to_string())?;
+            store.set_secondary_enabled(true, current_ms()).map_err(|error| error.to_string())?;
+            store.set_secondary_last_error(None, current_ms()).map_err(|error| error.to_string())?;
+            match start_secondary_runtime(state) {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    let mut rollback = SyncStore::open(&index_path, primary_id).map_err(|open_error| open_error.to_string())?;
+                    let _ = rollback.set_secondary_last_error(Some(error.as_str()), current_ms());
+                    Err(error)
+                }
+            }
+        }
+        SyncManagementRequest::Stop => {
+            let was_running = state.service.is_some() || state.runtime.is_some();
+            let secondary_config = SyncStore::read_secondary_config(&index_path).map_err(|error| error.to_string())?;
+            let primary_config = SyncStore::read_primary_config(&index_path).map_err(|error| error.to_string())?;
+            // Interrupt active sockets and release the scheduler lease before
+            // retiring its outbox. A late ACK cannot race the role transition.
+            let was_secondary = state.role == "secondary" || (state.role.is_empty() && secondary_config.is_some());
+            stop_service(state);
+            if was_secondary {
+                // Same composition as the Unpair arm: everything under this
+                // mutex is state-only — the notice delivery and the index-side
+                // converge run on the teardown thread, off the sheet's poll.
+                begin_async_secondary_teardown(state, &index_path)?;
+            } else {
+                // Stop & disconnect is a complete primary teardown. Do not
+                // leave a disabled primary config behind for recovery: the
+                // next status read must be unconfigured and the next primary
+                // start must be an explicit role choice.
+                cancel_pending_pairing(&index_path)?;
+                clear_pending_pairing()?;
+                if let Some(config) = primary_config {
+                    // State-only teardown: never opens the usage index, so the
+                    // stop button cannot queue behind the ingest write lock.
+                    // The index-side convergence (unpaired timestamp, capture
+                    // mirror, journal release) runs on a background thread and
+                    // re-converges via the recovery loop if the lock wins.
+                    SyncStore::clear_primary_config_state(&index_path, &config.primary_id).map_err(|error| error.to_string())?;
+                    let converge_path = index_path.clone();
+                    let converge_primary = config.primary_id.clone();
+                    thread::spawn(move || {
+                        let started = Instant::now();
+                        let outcome = (|| {
+                            let store = match SyncStore::open(&converge_path, converge_primary.clone()) {
+                                Ok(store) => store,
+                                Err(error) => return Err(format!("cannot open sync store: {error}")),
+                            };
+                            store.index().conn().execute(
+                                "INSERT INTO meta(key, value) VALUES('device_sync_last_primary_unpaired_at_ms', ?1)
+                                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                                [current_ms().to_string()],
+                            ).map_err(|error| format!("cannot record the unpaired timestamp: {error}"))?;
+                            Ok(())
+                        })();
+                        log_sync_action("stop_converge", started, outcome.as_ref().err().map(String::as_str));
+                    });
+                }
+                clear_primary_state(state);
+            }
+            state.pending_pairing_attempted = true;
+            state.invite_url = None;
+            state.invite_expires_at_ms = None;
+            state.discovery_error = None;
+            state.phase = if was_running { SyncPhase::Cancelled } else { SyncPhase::Idle };
+            Ok(())
+        },
+        SyncManagementRequest::SwitchToSecondary => {
+            if state.service.is_some() || state.runtime.is_some() {
+                return Err("stop the sync service before switching this device to secondary".into());
+            }
+            let Some(config) = SyncStore::read_primary_config(&index_path).map_err(|error| error.to_string())? else {
+                return Err("this device has no primary configuration to switch".into());
+            };
+            let mut store = SyncStore::open(&index_path, config.primary_id).map_err(|error| error.to_string())?;
+            store.clear_primary_config(current_ms()).map_err(|error| error.to_string())?;
+            clear_pending_pairing()?;
+            clear_primary_state(state);
+            Ok(())
+        },
+        SyncManagementRequest::Unpair => {
+            if state.role == "primary" || state.service.is_some() {
+                return Err("stop the primary sync service before unpairing this device".into());
+            }
+            // Async teardown, not `unpair_secondary_binding`: the user is
+            // waiting on this thread, and the pending-pairing branch inside
+            // the helper covers the no-config case synchronously.
+            begin_async_secondary_teardown(state, &index_path)
+        },
+        SyncManagementRequest::ResetSecondary => {
+            let config = SyncStore::read_secondary_config(&index_path)
+                .map_err(|error| format!("cannot read secondary sync configuration: {error}"))?
+                .ok_or_else(|| "pair this device before resetting secondary sync".to_string())?;
+            let was_running = state.runtime.is_some();
+            // The runtime holds the scheduler lease and an in-memory outbox
+            // view; dropping it joins the thread and releases the lease before
+            // the reset deletes its rows.
+            stop_service(state);
+            let mut store = SyncStore::open(&index_path, config.primary_id.clone()).map_err(|error| error.to_string())?;
+            store.reset_secondary_sync_state(current_ms()).map_err(|error| error.to_string())?;
+            store.set_secondary_last_error(None, current_ms()).map_err(|error| error.to_string())?;
+            drop(store);
+            if was_running {
+                if let Err(error) = start_secondary_runtime(state) {
+                    let mut rollback = SyncStore::open(&index_path, config.primary_id).map_err(|open_error| open_error.to_string())?;
+                    let _ = rollback.set_secondary_last_error(Some(error.as_str()), current_ms());
+                    return Err(error);
+                }
+            }
+            Ok(())
+        }
+        SyncManagementRequest::CreateInvite { expires_at_ms } => {
+            let primary_id = state_primary_id(state, &snapshot)?;
+            let endpoint = state.endpoint.clone().ok_or_else(|| "start the primary service before creating an invite".to_string())?;
+            let pin = state.certificate_pin.clone().ok_or_else(|| "primary certificate pin is unavailable".to_string())?;
+            let certificate_der = state.service.as_ref().ok_or_else(|| "primary service is not running".to_string())?.certificate_der.clone();
+            let mut store = SyncStore::open(&index_path, primary_id.clone()).map_err(|e| e.to_string())?;
+            let expires = expires_at_ms.unwrap_or_else(|| current_ms().saturating_add(15 * 60 * 1000));
+            let invite = store.create_pairing_invite(endpoint, pin, expires).map_err(|e| e.to_string())?;
+            state.invite_url = Some(invite.url_with_primary_name(
+                &primary_id, "localhost", &certificate_der, &usage_index::hostname(), Some(std::env::consts::OS),
+            ).map_err(|e| e.to_string())?);
+            state.invite_expires_at_ms = Some(invite.expires_at_ms);
+            Ok(())
+        }
+        SyncManagementRequest::Pair { invite, origin, display_name, os } => {
+            // Mark the in-flight window (cleared on every exit below) so the
+            // recovery tick never resumes this pairing's pending file.
+            state.pairing_worker_in_flight = true;
+            let paired = (|| {
+                let details = PairingInvite::parse_url(&invite).map_err(|e| format!("invalid pairing invite: {e}"))?;
+                let certificate_der = details.certificate_der.clone().ok_or_else(|| "invite does not contain the public server certificate; ask the primary for a fresh invite".to_string())?;
+                pair_secondary_with_details(state, &index_path, &snapshot, details, certificate_der, origin, display_name, os)
+            })();
+            state.pairing_worker_in_flight = false;
+            paired
+        }
+        SyncManagementRequest::PairDiscovered { primary_id, endpoint, certificate_pin, origin, display_name, os } => {
+            state.pairing_worker_in_flight = true;
+            let paired = (|| {
+                let pin = parse_pin(&certificate_pin)?;
+                let mut transport = Tls13HttpsTransport::new(HttpsTransportConfig::pinned_hash(endpoint.clone(), "localhost", pin)).map_err(|e| e.to_string())?;
+                state.interrupt.install(&transport);
+                let (invite, certificate_der, primary_display_name, primary_os) = transport.request_pairing_invite_with_primary_name(&primary_id, &endpoint).map_err(|e| format!("cannot obtain a secure pairing invite: {e}"))?;
+                pair_secondary_with_details(state, &index_path, &snapshot, PairingInviteDetails { invite, primary_id: Some(primary_id), server_name: Some("localhost".into()), primary_display_name, primary_os, certificate_der: Some(certificate_der.clone()) }, certificate_der, origin, display_name, os)
+            })();
+            state.pairing_worker_in_flight = false;
+            paired
+        }
+        SyncManagementRequest::Approve { request_id } => {
+            let primary_id = state_primary_id(state, &snapshot)?;
+            SyncStore::open(&index_path, primary_id).map_err(|e| e.to_string())?.approve_pairing(&request_id, current_ms()).map(|_| ()).map_err(|e| e.to_string())
+        }
+        SyncManagementRequest::Reject { request_id } => {
+            let primary_id = state_primary_id(state, &snapshot)?;
+            SyncStore::open(&index_path, primary_id).map_err(|e| e.to_string())?.clear_pairing_request(&request_id, current_ms()).map_err(|e| e.to_string())
+        }
+        SyncManagementRequest::ClearExpiredRequest { request_id } => {
+            let request = snapshot.pairing_requests.iter().find(|request| request.request_id == request_id)
+                .ok_or_else(|| "pairing request was not found".to_string())?;
+            if request.status != "expired" {
+                return Err("pairing request is not expired".into());
+            }
+            let primary_id = state_primary_id(state, &snapshot)?;
+            SyncStore::open(&index_path, primary_id).map_err(|e| e.to_string())?.reject_pairing(&request_id).map_err(|e| e.to_string())
+        }
+        SyncManagementRequest::Pause { device_id } => {
+            let primary_id = state_primary_id(state, &snapshot)?;
+            SyncStore::open(&index_path, primary_id).map_err(|e| e.to_string())?.pause_device(&device_id).map_err(|e| e.to_string())?;
+            push_device_state(state, &device_id, "paused", primary_sharing_enabled(&index_path));
+            Ok(())
+        }
+        SyncManagementRequest::Resume { device_id } => {
+            let primary_id = state_primary_id(state, &snapshot)?;
+            SyncStore::open(&index_path, primary_id).map_err(|e| e.to_string())?.resume_device(&device_id).map_err(|e| e.to_string())?;
+            push_device_state(state, &device_id, "paired", primary_sharing_enabled(&index_path));
+            Ok(())
+        }
+        SyncManagementRequest::Revoke { device_id } => {
+            let primary_id = state_primary_id(state, &snapshot)?;
+            SyncStore::open(&index_path, primary_id).map_err(|e| e.to_string())?.revoke_device(&device_id, current_ms()).map(|_| ()).map_err(|e| e.to_string())?;
+            push_device_state(state, &device_id, "revoked", primary_sharing_enabled(&index_path));
+            if let Some(channel) = diagnostics_app.as_ref().and_then(|app| app.try_state::<EngineChannel>()) {
+                let _ = channel.0.send(Msg::Refresh);
+            }
+            Ok(())
+        }
+        }
+    })();
+    match result {
+        Ok(()) => {
+            if !is_status { state.last_error = None; }
+            if state.phase == SyncPhase::Running { state.phase = SyncPhase::Success; }
+            Ok(())
+        }
+        Err(error) => {
+            state.last_error = Some(error.clone());
+            state.phase = SyncPhase::Error;
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn sync_devices(app: AppHandle, request: Option<SyncManagementRequest>, control: State<'_, SyncControl>) -> Result<SyncDevicesView, String> {
+    let action = sync_action_name(request.as_ref());
+    let started = Instant::now();
+    let interrupts = matches!(request.as_ref(), Some(SyncManagementRequest::Stop | SyncManagementRequest::Unpair));
+    if interrupts { control.interrupt.stop(); }
+    let revoked_device = match request.as_ref() {
+        Some(SyncManagementRequest::Revoke { device_id }) => Some(device_id.clone()),
+        _ => None,
+    };
+    if matches!(request.as_ref(), Some(SyncManagementRequest::Stop)) {
+        if let Some(diagnostics) = app.try_state::<crate::diagnostics::DiagnosticsState>() {
+            diagnostics.revoke_all();
+        }
+    }
+    if matches!(request.as_ref(), Some(SyncManagementRequest::Discover)) {
+        {
+            let mut state = control.state.lock().map_err(|_| "sync management state is busy".to_string())?;
+            if state.discovery_in_flight {
+                let error = Err("mDNS discovery is already running".into());
+                crate::logging::sync_event(action, false, Some("operation_busy"));
+                eprintln!("kimo-token sync: action={action} total_ms={}", started.elapsed().as_millis());
+                log_sync_action(action, started, error.as_ref().err().map(String::as_str));
+                return error;
+            }
+            state.discovery_in_flight = true;
+            state.phase = SyncPhase::Running;
+        }
+        let discovery_started = Instant::now();
+        let discovery = match tauri::async_runtime::spawn_blocking(discover_primaries).await {
+            Ok(result) => result,
+            Err(error) => Err(format!("mDNS discovery worker stopped: {error}")),
+        };
+        let result = (|| {
+            let mut state = control.state.lock().map_err(|_| "sync management state is busy".to_string())?;
+            state.discovery_in_flight = false;
+            apply_discovery_result(&mut state, discovery, discovery_started);
+            sync_snapshot(&mut state, Some(app.clone()), false)
+        })();
+        crate::logging::sync_event(action, result.is_ok(), result.as_ref().err().map(|_| "handler_failed"));
+        eprintln!("kimo-token sync: action={action} total_ms={}", started.elapsed().as_millis());
+        log_sync_action(action, started, result.as_ref().err().map(String::as_str));
+        return result;
+    }
+    let pairing_request = match request.as_ref() {
+        Some(SyncManagementRequest::Pair { invite, origin, display_name, os }) => Some(SyncManagementRequest::Pair {
+            invite: invite.clone(), origin: origin.clone(), display_name: display_name.clone(), os: os.clone(),
+        }),
+        Some(SyncManagementRequest::PairDiscovered { primary_id, endpoint, certificate_pin, origin, display_name, os }) => Some(SyncManagementRequest::PairDiscovered {
+            primary_id: primary_id.clone(), endpoint: endpoint.clone(), certificate_pin: certificate_pin.clone(),
+            origin: origin.clone(), display_name: display_name.clone(), os: os.clone(),
+        }),
+        _ => None,
+    };
+    if let Some(pairing_request) = pairing_request {
+        let state_ref = Arc::clone(&control.state);
+        let interrupt = control.interrupt.clone();
+        let delivery_lock = {
+            let mut state = control.state.lock().map_err(|_| "sync management state is busy".to_string())?;
+            reap_service(&mut state);
+            if state.service.is_some() { return Err("stop the primary sync service before pairing this device as a secondary".into()); }
+            let index_path = sync_index_path()?;
+            if state.runtime.is_some() || state.role == "secondary" {
+                // Same zero-friction teardown as the in-pairing guard: an old
+                // binding is removed here, under the lock, before the pairing
+                // worker starts, instead of dead-ending the new invite.
+                unpair_secondary_binding(&mut state, &index_path)?;
+            }
+            if state.role == "primary" && state.service.is_none() && !state.primary_starting {
+                // A stale primary role — the listener died but the role row
+                // and the in-memory state still say primary — would fail the
+                // worker's final check with a misleading "sync state changed"
+                // error and leave a phantom paired row on the primary. Drop
+                // the dead role the same way SwitchToSecondary does, so the
+                // final check passes honestly.
+                if let Some(config) = SyncStore::read_primary_config(&index_path).map_err(|error| error.to_string())? {
+                    let mut store = SyncStore::open(&index_path, config.primary_id).map_err(|error| error.to_string())?;
+                    store.clear_primary_config(current_ms()).map_err(|error| error.to_string())?;
+                }
+                clear_pending_pairing()?;
+                clear_primary_state(&mut state);
+            }
+            // Set (not OR): this also clears a flag latched by a worker that
+            // died mid-flight, so one crashed pairing can never block the
+            // next attempt. Until the worker's final locked section clears
+            // the flag, the recovery tick may not re-arm the pending retry
+            // or resume the pending file.
+            state.pairing_worker_in_flight = true;
+            state.phase = SyncPhase::Running;
+            Arc::clone(&state.disconnect_delivery)
+        };
+        let worker_app = app.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let index_path = sync_index_path()?;
+            let details = match pairing_request {
+                SyncManagementRequest::Pair { invite, origin, display_name, os } => {
+                    let details = PairingInvite::parse_url(&invite).map_err(|e| format!("invalid pairing invite: {e}"))?;
+                    let certificate_der = details.certificate_der.clone().ok_or_else(|| "invite does not contain the public server certificate; ask the primary for a fresh invite".to_string())?;
+                    (details, certificate_der, origin, display_name, os)
+                }
+                SyncManagementRequest::PairDiscovered { primary_id, endpoint, certificate_pin, origin, display_name, os } => {
+                    let pin = parse_pin(&certificate_pin)?;
+                    let mut transport = Tls13HttpsTransport::new(HttpsTransportConfig::pinned_hash(endpoint.clone(), "localhost", pin)).map_err(|e| e.to_string())?;
+                    interrupt.install(&transport);
+                    let (invite, certificate_der, primary_display_name, primary_os) = transport.request_pairing_invite_with_primary_name(&primary_id, &endpoint)
+                        .map_err(|e| format!("cannot obtain a secure pairing invite: {e}"))?;
+                    (PairingInviteDetails {
+                        invite, primary_id: Some(primary_id), server_name: Some("localhost".into()), primary_display_name, primary_os,
+                        certificate_der: Some(certificate_der.clone()),
+                    }, certificate_der, origin, display_name, os)
+                }
+                _ => unreachable!(),
+            };
+            let snapshot = SyncStore::read_status(&index_path).map_err(|e| format!("cannot read device sync status: {e}"))?;
+            let mut temp = SyncControlState::default();
+            temp.interrupt = interrupt.clone();
+            temp.disconnect_delivery = delivery_lock;
+            let (details, certificate_der, origin, display_name, os) = details;
+            pair_secondary_with_details(&mut temp, &index_path, &snapshot, details, certificate_der, origin, display_name, os)?;
+            let runtime = temp.runtime.take();
+            let endpoint = temp.endpoint.take();
+            let primary_id = temp.primary_id.take();
+            let certificate_pin = temp.certificate_pin.take();
+            let mut state = state_ref.lock().map_err(|_| "sync management state is busy".to_string())?;
+            // Every exit from here — commit or the rejected check below —
+            // must release the recovery tick's re-arm/resume gate.
+            state.pairing_worker_in_flight = false;
+            if state.service.is_some() || state.runtime.is_some() || !state.role.is_empty() {
+                drop(runtime);
+                return Err("sync state changed while pairing was in progress".into());
+            }
+            state.role = "secondary".into();
+            state.primary_id = primary_id;
+            state.endpoint = endpoint;
+            state.certificate_pin = certificate_pin;
+            state.runtime = runtime;
+            state.last_error = None;
+            state.phase = SyncPhase::Success;
+            sync_snapshot(&mut state, Some(worker_app), false)
+        }).await.map_err(|_| "sync management worker stopped".to_string())?;
+        if result.is_ok() { let _ = app.emit("sync-updated", ()); }
+        crate::logging::sync_event(action, result.is_ok(), result.as_ref().err().map(|_| "handler_failed"));
+        eprintln!("kimo-token sync: action={action} total_ms={}", started.elapsed().as_millis());
+        log_sync_action(action, started, result.as_ref().err().map(String::as_str));
+        return result;
+    }
+    if matches!(request.as_ref(), Some(SyncManagementRequest::StartPrimary { .. })) {
+        // The full start waits behind ingest write locks for minutes on a busy
+        // index. Accept immediately, flip to a visible starting state, and let
+        // the blocking work finish in a worker; the sheet's existing poll
+        // loop and the recovery thread publish the final state.
+        {
+            let mut state = control.state.lock().map_err(|_| "sync management state is busy".to_string())?;
+            if state.primary_starting {
+                let error = Err("primary sync is already starting".into());
+                crate::logging::sync_event(action, false, Some("operation_busy"));
+                log_sync_action(action, started, error.as_ref().err().map(String::as_str));
+                return error;
+            }
+            state.primary_starting = true;
+            state.last_error = None;
+            state.phase = SyncPhase::Running;
+        }
+        let state_ref = Arc::clone(&control.state);
+        let worker_app = app.clone();
+        let start_request = match request.as_ref() {
+            Some(SyncManagementRequest::StartPrimary { bind, advertise_host, allow_lan }) => SyncManagementRequest::StartPrimary {
+                bind: bind.clone(), advertise_host: advertise_host.clone(), allow_lan: *allow_lan,
+            },
+            _ => unreachable!("guarded above"),
+        };
+        let initial_view = (|| {
+            let mut state = control.state.lock().map_err(|_| "sync management state is busy".to_string())?;
+            let view = sync_snapshot(&mut state, Some(app.clone()), false);
+            // The worker below only spawns once this snapshot succeeds; on an
+            // early failure the starting latch must fall now or no later
+            // start is ever accepted ("primary sync is already starting").
+            if view.is_err() { state.primary_starting = false; }
+            view
+        })()?;
+        tauri::async_runtime::spawn_blocking(move || {
+            let started_worker = Instant::now();
+            let outcome = (|| {
+                let mut state = state_ref.lock().map_err(|_| "sync management state is busy".to_string())?;
+                let result = run_sync_action(&mut state, start_request, Some(worker_app.clone()));
+                let view = sync_snapshot(&mut state, Some(worker_app.clone()), false);
+                result?;
+                view.map(|_| ())
+            })();
+            let error = outcome.as_ref().err().cloned();
+            if let Ok(mut state) = state_ref.lock() {
+                state.primary_starting = false;
+                if let Some(message) = &error {
+                    state.last_error = Some(message.clone());
+                    state.phase = SyncPhase::Error;
+                }
+            }
+            // The worker's completion flips panel-visible state in either
+            // direction (service up, or a bind failure into last_error); the
+            // returned initial view is long stale by now.
+            let _ = worker_app.emit("sync-updated", ());
+            crate::logging::sync_event("start_primary_worker", outcome.is_ok(), outcome.as_ref().err().map(|_| "handler_failed"));
+            log_sync_action("start_primary_worker", started_worker, outcome.as_ref().err().map(String::as_str));
+            eprintln!("kimo-token sync: action=start_primary_worker total_ms={}", started_worker.elapsed().as_millis());
+        });
+        crate::logging::sync_event(action, true, None);
+        log_sync_action(action, started, None);
+        return Ok(initial_view);
+    }
+    // A mutation that just succeeded changed panel-visible state (remote
+    // diagnostics can drive these too). Push the news; Status reads stay
+    // silent so the frontend's event handler cannot echo into a loop.
+    let mutating = !matches!(request.as_ref(), None | Some(SyncManagementRequest::Status));
+    let state_ref = Arc::clone(&control.state);
+    let worker_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut state = state_ref.lock().map_err(|_| "sync management state is busy".to_string())?;
+        if state.discovery_in_flight && !matches!(request.as_ref(), Some(SyncManagementRequest::Status | SyncManagementRequest::Stop | SyncManagementRequest::Unpair)) {
+            return Err("mDNS discovery is already running".into());
+        }
+        if let Some(request) = request { run_sync_action(&mut state, request, Some(worker_app.clone()))?; }
+        sync_snapshot(&mut state, Some(worker_app), false)
+    }).await.map_err(|_| "sync management worker stopped".to_string())?;
+    if result.is_ok() && mutating {
+        let _ = app.emit("sync-updated", ());
+    }
+    if interrupts { control.interrupt.stopping.store(false, Ordering::Release); }
+    crate::logging::sync_event(action, result.is_ok(), result.as_ref().err().map(|_| "handler_failed"));
+    if result.is_ok() {
+        if let Some(device_id) = revoked_device.as_deref() {
+            if let Some(diagnostics) = app.try_state::<crate::diagnostics::DiagnosticsState>() {
+                diagnostics.revoke_target(device_id);
+            }
+        }
+    }
+    eprintln!("kimo-token sync: action={action} total_ms={}", started.elapsed().as_millis());
+    log_sync_action(action, started, result.as_ref().err().map(String::as_str));
+    result
+}
+
+/// Returns the last report; `force` is reserved for the Refresh button.
+/// The re-index never happens on this thread — the fresh report arrives through
+/// the `report-updated` event.
+#[tauri::command]
+pub async fn get_report(app: AppHandle, force: bool) -> Result<Report, String> {
+    if force {
+        if let Some(channel) = app.try_state::<EngineChannel>() {
+            // 按钮是唯一可以同时触发用量重算和厂商查询的面板入口。
+            let _ = channel.0.send(Msg::RefreshWithQuota);
+        }
+    }
+    let shared = app.state::<Shared>();
+    if let Some(error) = shared.startup_error() {
+        return Err(error);
+    }
+    shared.report().ok_or_else(|| "indexing".to_string())
+}
+
+// 处理可见面板上的手动查询，与自动配额探测分别控制。
+#[tauri::command]
+pub async fn get_codex_reset_credits() -> usage_quota::CodexResetCredits {
+    use usage_quota::CodexResetCredits;
+    if panel::is_panel_hidden() {
+        return CodexResetCredits::Unavailable { cards: None };
+    }
+    // 读取本地登录状态及 HTTPS 请求都交给阻塞线程。
+    tauri::async_runtime::spawn_blocking(usage_quota::codex_reset_credits)
+        .await
+        .unwrap_or(CodexResetCredits::Unavailable { cards: None })
+}
+
+// 恢复上一次成功查询的结果，不访问远端接口。
+#[tauri::command]
+pub async fn get_cached_codex_reset_credits() -> Option<Vec<usage_quota::CodexResetCredit>> {
+    tauri::async_runtime::spawn_blocking(usage_quota::cached_codex_reset_credits)
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Forgets one historical `~/kimo-token-sync` import origin: its rollup rows
+/// leave the report (the machine disappears from the scope list) and the
+/// import registry entries go with it. The local machine's empty origin is
+/// not addressable, and a live device-sync peer's origin is refused — this
+/// is the door for an mbp that no longer syncs. Returns the rollup row
+/// count removed, for the confirm toast.
+#[tauri::command]
+pub async fn forget_imported_origin(app: AppHandle, origin: String) -> Result<u64, String> {
+    if origin.is_empty() {
+        return Err("the local machine cannot be forgotten here".into());
+    }
+    let index_path = usage_index::Index::default_path().ok_or_else(|| "no platform data directory available".to_string())?;
+    if let Ok(status) = SyncStore::read_status(&index_path) {
+        if status.devices.iter().any(|d| d.origin == origin && d.status == usage_device_sync::DeviceStatus::Paired) {
+            return Err(format!("{origin} is a live device-sync peer; disconnect it first"));
+        }
+    }
+    let forget_origin = origin.clone();
+    let removed = tauri::async_runtime::spawn_blocking(move || {
+        let mut index = usage_index::Index::open(index_path).map_err(|e| e.to_string())?;
+        index.forget_imported_origin(&forget_origin).map_err(|e| e.to_string())
+    }).await.map_err(|_| "index worker stopped".to_string())??;
+    // The sheet's imported list is built from the report, and the report is
+    // the engine's cached fold — answering immediately would hand back the
+    // pre-forget fold and leave the forgotten origin on screen. Wake the
+    // engine with Scope, the light path: it refolds the report from the
+    // index as it now stands (no disk rescan — the delete above is the only
+    // change, and a manual-refresh's full ingest walk cost seconds here).
+    // The wait is bounded so a stuck engine cannot hang the command.
+    let shared = app.state::<Shared>();
+    if let Some(channel) = app.try_state::<EngineChannel>() {
+        let _ = shared.queue_scope_fold(&channel.0);
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    while std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let gone = shared.report().map(|report| report.syncs.iter().all(|s| s.origin != origin)).unwrap_or(false);
+        if gone { break; }
+    }
+    Ok(removed)
+}
+
+/// The webview's uncaught errors and rejections, written into panel.log: a
+/// render-phase crash unmounts React and re-reveals the boot shell, which
+/// from the outside is indistinguishable from "still indexing" — this is
+/// the channel that names the crash instead.
+#[tauri::command]
+pub fn frontend_error(app: AppHandle, message: String) -> Result<(), String> {
+    let _ = app;
+    crate::logging::error(&format!("webview: {}", message.replace('\n', " | ")));
+    Ok(())
+}
+
+/// The webview's detected UI language (system locale; the `?lang=` override
+/// wins for QA). The Rust chrome — tray menu, tooltip, updater copy — follows
+/// it; the menu rebuilds here because muda items carry their labels from
+/// construction.
+#[tauri::command]
+pub async fn set_ui_lang(app: AppHandle, lang: String) -> Result<(), String> {
+    let Some(parsed) = crate::lang::parse(&lang) else {
+        return Err(format!("unknown lang: {lang}"));
+    };
+    if crate::lang::get() != parsed {
+        crate::lang::set(parsed);
+        tray::apply_lang(&app);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_tray_state(app: AppHandle) -> Result<TrayState, String> {
+    tray::tray_state(&app).ok_or_else(|| "indexing".to_string())
+}
+
+#[tauri::command]
+pub async fn set_tray_mode(app: AppHandle, mode: TrayMode) -> Result<(), String> {
+    let report = app.state::<Shared>().report();
+    if let Err(e) = app.state::<Shared>().set_tray_mode(mode) {
+        return Err(e);
+    }
+    // The menubar repaints before anything touches disk: the switch must feel
+    // instant, and a slow save must never sit between the click and the pixel.
+    if let Some(report) = report {
+        tray::refresh(&app, &report, mode);
+    }
+    // Persist after the repaint: disk IO never sits between the click and the
+    // menubar, and a failed write still leaves this session working.
+    mutate_settings_async(&app, |_| {}).await?;
+    Ok(())
+}
+
+/// The saved drag order of the quota section, as the panel persists it.
+#[tauri::command]
+pub async fn get_quota_order(app: AppHandle) -> Result<QuotaOrder, String> {
+    let shared = app.state::<Shared>();
+    let Ok(settings) = shared.settings.lock() else {
+        return Err("settings busy".into());
+    };
+    Ok(QuotaOrder { tools: settings.quota_tools.clone(), rows: settings.quota_rows.clone() })
+}
+
+/// Persist a new drag order. The panel applies the reorder locally first, so
+/// this only has to survive the next launch; a failure costs the arrangement,
+/// never a report.
+#[tauri::command]
+pub async fn set_quota_order(app: AppHandle, order: QuotaOrder) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| {
+        s.quota_tools = order.tools;
+        s.quota_rows = order.rows;
+    }).await.map(|_| ())
+}
+
+/// The drag order of the quota section: tool ids for the groups,
+/// `<tool>/<row id>` for the bars inside them.
+#[derive(Debug, Clone, serde::Deserialize, Serialize)]
+pub struct QuotaOrder {
+    pub tools: Vec<String>,
+    pub rows: Vec<String>,
+}
+
+/// Drops the price cache and re-downloads models.dev off the main thread, then
+/// hands the new table to the engine so it re-summarizes without re-reading logs.
+#[tauri::command]
+pub async fn refresh_pricing(app: AppHandle) -> Result<PricingMeta, String> {
+    let sender = app
+        .try_state::<EngineChannel>()
+        .map(|channel| channel.0.clone())
+        .ok_or_else(|| "engine unavailable".to_string())?;
+    let meta = tauri::async_runtime::spawn_blocking(move || {
+        let map = PricingMap::refresh(&PricingOptions {
+            offline: false,
+            cache_dir: PricingOptions::default_cache_dir(),
+            overrides: Default::default(),
+        });
+        let meta = map.meta().clone();
+        let _ = sender.send(Msg::Pricing(map));
+        meta
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(meta)
+}
+
+/// The macOS application icon of each tool that ships one, as a `data:` URL.
+///
+/// Filesystem reads only, and only ever decoration: an unreadable icon costs the
+/// panel a coloured monogram, never a figure.
+#[tauri::command]
+pub async fn tool_icons() -> Result<BTreeMap<String, String>, String> {
+    Ok(usage_core::icons::icon_data_urls().into_iter()
+        .filter(|(tool, _)| tool == crate::PANEL_TOOL).collect())
+}
+
+/// What the settings sheet shows: the switches plus the build version.
+#[derive(Debug, Clone, Serialize)]
+pub struct PanelSettings {
+    pub tray_mode: TrayMode,
+    pub autostart: bool,
+    pub refresh_secs: u64,
+    pub theme: Theme,
+    pub show_money: bool,
+    pub quota_display_mode: QuotaDisplayMode,
+    pub show_cycle_tokens: bool,
+    pub ttft_enabled: bool,
+    pub performance_monitoring: bool,
+    pub hide_unused_tools: bool,
+    pub hide_unused_quota: bool,
+    pub hide_unused_estimation: bool,
+    pub bubble_enabled: bool,
+    pub bubble_skin: BubbleSkin,
+    pub pet_companion: crate::settings::PetPreferences,
+    pub host_exit_pause: bool,
+    pub auto_checkin: bool,
+    pub quota_polling: bool,
+    pub quota_probes_off: Vec<String>,
+    pub notify_tiers: NotifyTier,
+    pub notify_muted: Vec<String>,
+    pub plan_expiry_notify_days: Option<u8>,
+    pub auto_update_check: bool,
+    pub version: String,
+    /// The same number `main.rs` logs at startup ("build N starting"), so the
+    /// 关于 page and the log agree about which artifact is actually running.
+    pub build: &'static str,
+}
+
+/// One row of the settings sheet's per-tool polling page, straight from the
+/// probe registry — the page has no list of its own to fall out of step with.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProbeRow {
+    pub id: &'static str,
+    pub host_gated: bool,
+    pub answered_here: bool,
+    /// What the composed gate answers right now: master switch ∧ not excluded.
+    pub polling: bool,
+}
+
+#[tauri::command]
+pub async fn probe_tools(app: AppHandle) -> Result<Vec<ProbeRow>, String> {
+    let settings = app.state::<Shared>().settings();
+    Ok(usage_quota::inventory_for_tool(crate::PANEL_TOOL)
+        .into_iter()
+        .map(|p| ProbeRow {
+            polling: settings.probe_allowed(p.tool),
+            id: p.tool,
+            host_gated: p.host_gated,
+            answered_here: p.answered_here,
+        })
+        .collect())
+}
+
+/// Open a release page / mailto link in the user's browser. The scheme
+/// whitelist is the whole of it: a panel that reads local files has no business
+/// being told to launch arbitrary URLs.
+#[tauri::command]
+pub fn open_external(url: String) -> Result<(), String> {
+    crate::logging::info(&format!("open_external: {url}"));
+    let allowed = url.starts_with("https://")
+        || url.starts_with("http://")
+        || url.starts_with("mailto:");
+    if !allowed {
+        return Err(format!("unsupported url scheme: {url}"));
+    }
+    // The mail draft takes a beat to appear; a second click on the same
+    // button while it does reads as "nothing happened" and opens a second
+    // draft. Same URL within 1.5s is the same intent — swallow it.
+    static LAST: std::sync::OnceLock<std::sync::Mutex<Option<(String, std::time::Instant)>>> =
+        std::sync::OnceLock::new();
+    let last = LAST.get_or_init(|| std::sync::Mutex::new(None));
+    if let Ok(mut slot) = last.lock() {
+        let duplicate = slot
+            .as_ref()
+            .is_some_and(|(prev, at)| *prev == url && at.elapsed() < std::time::Duration::from_millis(1500));
+        *slot = Some((url.clone(), std::time::Instant::now()));
+        if duplicate {
+            return Ok(());
+        }
+    }
+    #[cfg(target_os = "macos")]
+    let spawned = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(target_os = "windows")]
+    let spawned = {
+        // `cmd` is a console binary, so without this every panel link (发邮件 /
+        // Releases / 日志) opens through a visible console window that the default
+        // terminal paints for a moment and steals focus with.
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", &url])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let spawned = std::process::Command::new("xdg-open").arg(&url).spawn();
+    spawned.map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_panel_settings(app: AppHandle) -> Result<PanelSettings, String> {
+    let settings = app.state::<Shared>().settings();
+    Ok(PanelSettings {
+        tray_mode: settings.tray_mode,
+        autostart: settings.autostart,
+        refresh_secs: settings.refresh_secs,
+        theme: settings.theme,
+        show_money: settings.show_money,
+        quota_display_mode: settings.quota_display_mode,
+        show_cycle_tokens: settings.show_cycle_tokens,
+        ttft_enabled: settings.ttft_enabled,
+        performance_monitoring: settings.performance_monitoring,
+        hide_unused_tools: settings.hide_unused_tools,
+        hide_unused_quota: settings.hide_unused_quota,
+        hide_unused_estimation: settings.hide_unused_estimation,
+        bubble_enabled: settings.bubble_enabled,
+        bubble_skin: settings.bubble_skin,
+        pet_companion: settings.pet_companion,
+        host_exit_pause: settings.host_exit_pause,
+        auto_checkin: settings.auto_checkin,
+        quota_polling: settings.quota_polling,
+        quota_probes_off: settings.quota_probes_off.clone(),
+        notify_tiers: settings.notify_tiers,
+        notify_muted: settings.notify_muted.clone(),
+        plan_expiry_notify_days: settings.plan_expiry_notify_days,
+        auto_update_check: settings.auto_update_check,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        build: env!("KIMO_TOKEN_BUILD_ID"),
+    })
+}
+
+#[tauri::command]
+pub async fn set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
+    tray::set_autostart(&app, on);
+    Ok(())
+}
+
+/// 保存面板皮肤，并同步原生窗口的背景颜色。
+#[tauri::command]
+pub async fn set_theme(app: AppHandle, theme: Theme) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| s.theme = theme).await?;
+    // 在 UI 线程同步原生背板颜色，避免窗口边缘露出上一套外观。
+    #[cfg(target_os = "macos")]
+    {
+        let handle = app.clone();
+        app.run_on_main_thread(move || {
+            let theme = handle.state::<Shared>().settings().theme;
+            crate::panel::apply_window_background(&handle, Some(theme));
+        }).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// The page's two cold-start milestones, reported by name because they answer
+/// different questions: `boot` is when the bundle executed (index.html's shell is
+/// on screen), `content` is when it has figures — and only the second one retires
+/// the native boot note. See `panel::mark_page_boot` / `panel::mark_content_ready`
+/// for why neither may gate the window.
+#[tauri::command]
+pub fn panel_page_signal(app: tauri::AppHandle, stage: String) {
+    match stage.as_str() {
+        "boot" => crate::panel::mark_page_boot(),
+        "content" => crate::panel::mark_content_ready(&app),
+        other => crate::logging::error(&format!("panel: unknown page signal {other:?}")),
+    }
+}
+
+/// Reveal the diagnostic log directory in the OS file manager.
+#[tauri::command]
+pub fn open_log_dir() -> Result<(), String> {
+    let dir = crate::logging::log_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    #[cfg(target_os = "macos")]
+    let spawned = std::process::Command::new("open").arg(&dir).spawn();
+    #[cfg(target_os = "windows")]
+    let spawned = std::process::Command::new("explorer").arg(&dir).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let spawned = std::process::Command::new("xdg-open").arg(&dir).spawn();
+    spawned.map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Whether the tools page also lists tools with zero sessions this period.
+/// Off keeps the page to what actually ran; a quiet tool reappears the day it
+/// bills again. Same shape as the other panel switches: persist, then let the
+/// webview re-render from its own state.
+#[tauri::command]
+pub async fn set_hide_unused_tools(app: AppHandle, on: bool) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| s.hide_unused_tools = on).await.map(|_| ())
+}
+
+#[tauri::command]
+pub async fn set_hide_unused_quota(app: AppHandle, on: bool) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| s.hide_unused_quota = on).await.map(|_| ())
+}
+
+#[tauri::command]
+pub async fn set_hide_unused_estimation(app: AppHandle, on: bool) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| s.hide_unused_estimation = on).await.map(|_| ())
+}
+
+/// The host-exit pause: stop probing a tool's quota once its application has
+/// exited; the last known answer stays on screen until it runs again.
+#[tauri::command]
+pub async fn set_host_exit_pause(app: AppHandle, on: bool) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| s.host_exit_pause = on).await.map(|_| ())
+}
+
+/// The auto-check-in guarantee: on, the host-exit pause stops applying to the
+/// check-in tools (Trae CN, Qoder) — their claim is HTTPS against the account,
+/// so a closed host app must not cost a day, and their rows stay live in the
+/// strip. The master and per-tool switches still stand above it; this only
+/// lifts the host half of the gate.
+#[tauri::command]
+pub async fn set_auto_checkin(app: AppHandle, on: bool) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| s.auto_checkin = on).await?;
+    // 记录签到设置；设置变化本身只更新用量报告。
+    usage_quota::set_auto_checkin_enabled(on);
+    if let Some(channel) = app.try_state::<EngineChannel>() {
+        let _ = channel.0.send(Msg::Refresh);
+    }
+    Ok(())
+}
+
+/// Controls scheduled and manual quota checks. Toggling it keeps cached data.
+#[tauri::command]
+pub async fn set_quota_polling(app: AppHandle, on: bool) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| s.quota_polling = on).await.map(|_| ())
+}
+
+/// Banner switch: paired devices crossing the presence window. The mirror
+/// flag moves first so the ws hooks and the next poll obey at once; the
+/// edge cache keeps its shape, so flipping mid-episode stays quiet until
+/// the next real transition.
+#[tauri::command]
+pub async fn set_notify_device_presence(app: AppHandle, on: bool) -> Result<(), String> {
+    NOTIFY_DEVICE_PRESENCE.store(on, std::sync::atomic::Ordering::Release);
+    mutate_settings_async(&app, move |s| s.notify_device_presence = on).await.map(|_| ())
+}
+
+/// Banner switch: a fresh sync error, and the recovery from one.
+#[tauri::command]
+pub async fn set_notify_sync_status(app: AppHandle, on: bool) -> Result<(), String> {
+    NOTIFY_SYNC_STATUS.store(on, std::sync::atomic::Ordering::Release);
+    mutate_settings_async(&app, move |s| s.notify_sync_status = on).await.map(|_| ())
+}
+
+/// One tool's own switch — the only lever for the probes with no host mapping.
+/// The list is stored as exclusions (an allow-list would have to be rewritten
+/// every time the registry gains a probe).
+#[tauri::command]
+pub async fn set_tool_polling(app: AppHandle, tool: String, on: bool) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| {
+        s.quota_probes_off.retain(|t| *t != tool);
+        if !on {
+            s.quota_probes_off.push(tool);
+            s.quota_probes_off.sort();
+        }
+    }).await.map(|_| ())
+}
+
+/// Which banner lines fire. Delivery policy only: the tier machine keeps
+/// recording where each window stands, so turning this back on does not
+/// retro-fire a line crossed while it was off.
+#[tauri::command]
+pub async fn set_notify_tiers(app: AppHandle, tiers: NotifyTier) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| s.notify_tiers = tiers).await.map(|_| ())
+}
+
+/// Which lead time should announce an expiring vendor package. The UI only
+/// offers these values; reject hand-written settings that would make the
+/// reminder fire at an arbitrary interval.
+#[tauri::command]
+pub async fn set_plan_expiry_notify_days(app: AppHandle, days: Option<u8>) -> Result<(), String> {
+    if days.is_some_and(|n| !matches!(n, 1 | 3 | 5)) {
+        return Err("plan expiry reminder must be 1, 3, 5, or disabled".into());
+    }
+    mutate_settings_async(&app, move |s| s.plan_expiry_notify_days = days).await.map(|_| ())
+}
+
+/// One tool's banner mute, same exclusion-list shape as the polling switches.
+#[tauri::command]
+pub async fn set_tool_muted(app: AppHandle, tool: String, on: bool) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| {
+        s.notify_muted.retain(|t| *t != tool);
+        if on {
+            s.notify_muted.push(tool);
+            s.notify_muted.sort();
+        }
+    }).await.map(|_| ())
+}
+
+/// Dollar figures render at all — the switch the settings sheet flips.
+#[tauri::command]
+pub async fn set_show_money(app: AppHandle, on: bool) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| s.show_money = on).await.map(|_| ())
+}
+
+/// Persist the gauge direction without waking probes or clearing cached answers.
+#[tauri::command]
+pub async fn set_quota_display_mode(app: AppHandle, mode: QuotaDisplayMode) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| s.quota_display_mode = mode).await.map(|_| ())
+}
+
+/// Persist the optional local quota-cycle token summary without changing probes.
+#[tauri::command]
+pub async fn set_show_cycle_tokens(app: AppHandle, on: bool) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| s.show_cycle_tokens = on).await.map(|_| ())
+}
+
+#[tauri::command]
+pub fn get_ttft_snapshot(app: AppHandle) -> crate::ttft::TtftSnapshot {
+    app.state::<crate::ttft::TtftState>().snapshot()
+}
+
+#[tauri::command]
+pub fn set_ttft_enabled(app: AppHandle, on: bool) -> Result<(), String> {
+    let ttft = app.state::<crate::ttft::TtftState>();
+    let shared = app.state::<Shared>();
+    let mut settings = shared.settings.lock().map_err(|_| "settings busy")?;
+    let previous = settings.ttft_enabled;
+    if previous == on { return Ok(()); }
+    ttft.set_enabled(on)?;
+    let mut next = settings.clone();
+    next.ttft_enabled = on;
+    if let Err(error) = next.save().map_err(|error| error.to_string()) {
+        let _ = ttft.set_enabled(previous);
+        return Err(error.to_string());
+    }
+    *settings = next;
+    Ok(())
+}
+
+/// Start or stop opt-in process-family sampling; the logger writes samples to panel.log.
+#[tauri::command]
+pub fn set_performance_monitoring(app: AppHandle, on: bool) -> Result<(), String> {
+    let shared = app.state::<Shared>();
+    let mut settings = shared.settings.lock().map_err(|_| "settings busy")?;
+    let previous = settings.performance_monitoring;
+    if previous == on { return Ok(()); }
+    crate::performance::set_enabled(on).map_err(|error| error.to_string())?;
+    let mut next = settings.clone();
+    next.performance_monitoring = on;
+    if let Err(error) = next.save().map_err(|error| error.to_string()) {
+        let _ = crate::performance::set_enabled(previous);
+        return Err(error.to_string());
+    }
+    *settings = next;
+    Ok(())
+}
+
+
+/// Windows-only edge bubble. The command remains available on every target so
+/// the frontend bridge stays platform-neutral; non-Windows is a no-op.
+#[tauri::command]
+pub async fn set_bubble_enabled(app: AppHandle, on: bool) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| s.bubble_enabled = on).await?;
+    bubble::set_enabled(&app, on);
+    if !on { crate::pet_notice::dismiss(&app, None); }
+    Ok(())
+}
+
+/// Persist the bubble appearance and switch all listening pages immediately.
+#[tauri::command]
+pub async fn set_bubble_skin(app: AppHandle, skin: BubbleSkin) -> Result<(), String> {
+    {
+        let skin_clone = skin.clone();
+        mutate_settings_async(&app, move |s| s.bubble_skin = skin_clone).await?;
+    }
+    if let Err(error) = crate::bubble::resize_for_skin(&app, skin.as_str()) {
+        crate::logging::error(&format!("bubble skin window resize failed for {}: {error}", skin.as_str()));
+    }
+    app.emit("bubble-skin-changed", skin).map_err(|e| e.to_string())
+}
+
+/// Called by the Windows bubble when it is clicked.
+#[tauri::command]
+pub async fn set_pet_preferences(app:AppHandle, prefs:crate::settings::PetPreferences) -> Result<(), String> {
+    let mut prefs = prefs;
+    prefs.rest_interval_minutes = prefs.rest_interval_minutes.clamp(15,180);
+    {
+        let prefs_clone = prefs.clone();
+        mutate_settings_async(&app, move |s| s.pet_companion = prefs_clone).await?;
+    }
+    if crate::pet_notice::get_pet_notice(app.clone()).is_some_and(|n|
+        if n.kind == crate::pet_notice::Kind::Rest { !prefs.rest_reminders } else { !prefs.greetings }) {
+        crate::pet_notice::dismiss(&app, None);
+    }
+    app.emit("pet-preferences-changed", prefs).map_err(|e| e.to_string())
+}
+
+/// The pet's click: a toggle, not a one-way show — the second click takes
+/// the panel back down (user: 点击弹出菜单，再次点击隐藏菜单).
+#[tauri::command]
+pub fn show_panel(app: AppHandle) {
+    if crate::panel::is_panel_hidden() {
+        // A webview mounted while the machine was quiet can miss the boot
+        // publish event (no latch, no event replay). If the engine already
+        // holds a published report, re-emit it right as the window opens:
+        // the user is looking at the panel right now, so the handover from
+        // the boot shell to real figures must not wait out a cadence.
+        if let Some(shared) = app.try_state::<crate::engine::Shared>() {
+            if let Some(report) = shared.report() {
+                let _ = app.emit(crate::engine::REPORT_EVENT, &report);
+            }
+        }
+        panel::show(&app, None);
+    } else {
+        panel::hide(&app);
+    }
+}
+
+/// Dismisses the panel while keeping the native and Rust visibility state in
+/// sync, so the next tray click opens it again.
+#[tauri::command]
+pub fn hide_panel(app: AppHandle) {
+    panel::hide(&app);
+}
+
+/// While a text field holds focus the frontend asks for a keyboard session —
+/// the non-activating tray panel otherwise never owns the keys on Windows.
+#[tauri::command]
+pub fn panel_keyboard(app: AppHandle, on: bool) {
+    panel::set_keyboard_mode(&app, on);
+}
+
+/// Hands the press to the Rust-side drag loop. `window.startDragging()` cannot
+/// move this non-activating window (see `bubble::begin_drag`); non-Windows is a
+/// no-op so the bridge stays platform-neutral.
+#[tauri::command]
+pub fn begin_bubble_drag(app: AppHandle) {
+    bubble::begin_drag(&app);
+}
+
+/// The check-in button of a checkin-capable tool (Trae CN / Qoder): one
+/// forced claim right now — the automatic pass may already have tried and
+/// failed today; a manual click is the user asking again. The answer is
+/// structured: `ok` alone flips the button into the done badge, `message`
+/// (the reason it did not — 未到签到时间, 排队中 — or the success copy) rides
+/// the button until the next sample refresh.
+#[derive(serde::Serialize)]
+pub struct CheckinResult {
+    pub ok: bool,
+    pub message: String,
+}
+
+#[tauri::command]
+pub async fn checkin_now(tool: String) -> Result<CheckinResult, String> {
+    // The registry owns the dispatch (usage_quota::CHECKIN_TOOLS): the same
+    // table the engine's exemption and the strip's control read, so a claim
+    // added there is claimable here without a second list. A tool outside it
+    // is refused before anything touches a vendor.
+    let answer = tokio::task::spawn_blocking(move || usage_quota::manual_checkin(&tool))
+        .await
+        .map_err(|e| format!("签到任务失败: {e}"))?;
+    let (ok, message) = answer?;
+    Ok(CheckinResult { ok, message })
+}
+
+/// Persist the new fallback cadence, then wake the engine so the next wait
+/// uses it instead of the old value's remaining timeout.
+#[tauri::command]
+pub async fn set_refresh_secs(app: AppHandle, secs: u64) -> Result<(), String> {
+    mutate_settings_async(&app, move |s| s.refresh_secs = secs.clamp(10, 3600)).await?;
+    if let Some(channel) = app.try_state::<EngineChannel>() {
+        let _ = channel.0.send(Msg::Refresh);
+    }
+    Ok(())
+}
+
+/// Switches the machine scope the panel folds with. The command returns as
+/// soon as the engine has the message — the new report arrives through the
+/// ordinary `report-updated` event, so the UI never blocks on a refold.
+#[tauri::command]
+pub fn set_report_scope(app: AppHandle, scope: MachineScope) -> Result<(), String> {
+    // The scope normally comes from a menu built out of the report itself, but
+    // this is a boundary: an origin name that `origin_of` cannot parse back
+    // would silently select nothing, so reject it loudly instead.
+    if let MachineScope::Origin { name } = &scope {
+        if !origin_ok(name) {
+            return Err(format!(
+                "origin {name:?} contains ':', '/' or '\\' or a control character"
+            ));
+        }
+    }
+    let kind = match &scope {
+        MachineScope::All => "all",
+        MachineScope::Local => "local",
+        MachineScope::Origin { .. } => "origin",
+    };
+    let shared = app.state::<Shared>();
+    let channel = app.try_state::<EngineChannel>();
+    let (changed, queued) = match shared.set_scope(scope, channel.as_ref().map(|state| &state.0)) {
+        Ok(result) => result,
+        Err(error) => {
+            crate::logging::error(&format!("scope_request: scope={kind} outcome=error error={error}"));
+            return Err(error);
+        }
+    };
+    if !changed {
+        crate::logging::info(&format!("scope_request: scope={kind} outcome=unchanged"));
+        return Ok(());
+    }
+    if channel.is_none() {
+        crate::logging::error(&format!("scope_request: scope={kind} outcome=no_engine"));
+    } else if queued {
+        crate::logging::info(&format!("scope_request: scope={kind} outcome=queued"));
+    } else {
+        crate::logging::info(&format!("scope_request: scope={kind} outcome=coalesced"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod sync_tests {
+    #[test]
+    fn device_presence_is_a_freshness_window_not_a_latch() {
+        let now = 1_000_000;
+        assert!(!super::device_is_live(None, now), "never seen: offline");
+        assert!(super::device_is_live(Some(now - 1), now), "just seen: online");
+        assert!(super::device_is_live(Some(now - super::DEVICE_LIVE_TTL_MS + 1), now), "within the window: online");
+        assert!(!super::device_is_live(Some(now - super::DEVICE_LIVE_TTL_MS), now), "window expired: offline");
+    }
+
+    #[test]
+    fn stop_latches_before_a_pairing_transport_is_installed() {
+        let interrupt = super::SyncInterrupt::default();
+        interrupt.stop();
+        let transport = usage_device_sync::Tls13HttpsTransport::new(usage_device_sync::HttpsTransportConfig::pinned(
+            "https://127.0.0.1:1", "localhost", vec![1, 2, 3],
+        )).unwrap();
+        interrupt.install(&transport);
+        assert!(matches!(transport.probe_tcp(), Err(usage_device_sync::TransportError::Cancelled)));
+    }
+
+    #[test]
+    fn stop_interrupt_is_shared_with_the_locked_management_state() {
+        let control = super::SyncControl::default();
+        assert!(std::sync::Arc::ptr_eq(&control.interrupt, &control.state.lock().unwrap().interrupt));
+    }
+
+    use super::{advertised_endpoint_host, clear_primary_state, merge_discovered_primary, pairing_invite_needs_renewal, primary_endpoint, rearm_pending_pairing_retry, run_sync_action, sync_action_name, sync_error_code, DiscoveredPrimaryView, SyncControlState, SyncManagementRequest, SyncPhase, DEFAULT_PRIMARY_BIND, MDNS_SERVICE_TYPE};
+    use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn advertised_hosts_are_safe_for_invites() {
+        assert_eq!(advertised_endpoint_host("192.168.1.20", true).unwrap(), "192.168.1.20");
+        assert_eq!(advertised_endpoint_host("2001:db8::20", true).unwrap(), "[2001:db8::20]");
+        assert!(advertised_endpoint_host("0.0.0.0", true).is_err());
+        assert!(advertised_endpoint_host("127.0.0.1", true).is_err());
+        assert_eq!(advertised_endpoint_host("127.0.0.1", false).unwrap(), "127.0.0.1");
+        assert_eq!(advertised_endpoint_host("localhost", false).unwrap(), "localhost");
+        assert!(advertised_endpoint_host("localhost", true).is_err());
+        assert!(advertised_endpoint_host("::", false).is_err());
+        assert!(advertised_endpoint_host("2001:db8::20/path", true).is_err());
+    }
+
+    #[test]
+    fn primary_defaults_to_a_reachable_listener() {
+        assert_eq!(DEFAULT_PRIMARY_BIND, "0.0.0.0:47821");
+    }
+
+    #[test]
+    fn primary_endpoint_uses_reachable_advertised_host() {
+        let config = usage_device_sync::PrimarySyncConfig {
+            primary_id: "primary-1".into(),
+            bind_addr: "0.0.0.0:47821".into(),
+            advertise_host: Some("192.168.1.20".into()),
+            allow_lan: true,
+            enabled: true,
+            share_data_with_secondaries: false,
+            auto_approve_pairing: false,
+        };
+        let endpoint = primary_endpoint(&config).expect("configured LAN primary has an endpoint");
+        assert_eq!(endpoint, "https://192.168.1.20:47821");
+        assert!(!endpoint.contains("localhost"));
+        assert!(!endpoint.contains("0.0.0.0"));
+    }
+
+    #[test]
+    fn mdns_same_id_with_different_pin_is_blocked() {
+        let mut results = vec![DiscoveredPrimaryView { service_name: "one".into(), primary_id: "same".into(), display_name: "One".into(), endpoint: "https://192.168.1.2:47821".into(), certificate_pin: "a".repeat(64), identity_conflict: false }];
+        merge_discovered_primary(&mut results, DiscoveredPrimaryView { service_name: "two".into(), primary_id: "same".into(), display_name: "Two".into(), endpoint: "https://192.168.1.3:47821".into(), certificate_pin: "b".repeat(64), identity_conflict: false });
+        assert_eq!(results.len(), 1);
+        assert!(results[0].identity_conflict);
+    }
+
+    #[test]
+    fn discovery_clears_a_stale_pairing_error() {
+        let mut state = SyncControlState { last_error: Some("invalid pairing invite".into()), phase: SyncPhase::Error, ..SyncControlState::default() };
+        super::apply_discovery_result(&mut state, Ok(Vec::new()), Instant::now());
+        assert_eq!(state.last_error, None);
+        assert_eq!(state.phase, SyncPhase::Success);
+    }
+
+    #[test]
+    fn recovery_tick_rearms_pending_pairing_recovery() {
+        let mut state = SyncControlState { pending_pairing_attempted: true, ..SyncControlState::default() };
+        rearm_pending_pairing_retry(&mut state);
+        assert!(!state.pending_pairing_attempted, "refresh must allow the persisted request to retry");
+    }
+
+    #[test]
+    fn stopping_primary_clears_role_and_invite_state() {
+        let mut state = SyncControlState {
+            role: "primary".into(),
+            primary_id: Some("primary-1".into()),
+            endpoint: Some("https://192.0.2.1:47821".into()),
+            certificate_pin: Some("a".repeat(64)),
+            invite_url: Some("kimo-token://device-pair?secret=private".into()),
+            invite_expires_at_ms: Some(123),
+            phase: SyncPhase::Success,
+            ..SyncControlState::default()
+        };
+        clear_primary_state(&mut state);
+        assert!(state.role.is_empty());
+        assert_eq!(state.primary_id, None);
+        assert_eq!(state.endpoint, None);
+        assert_eq!(state.certificate_pin, None);
+        assert_eq!(state.invite_url, None);
+        assert_eq!(state.invite_expires_at_ms, None);
+        assert_eq!(state.phase, SyncPhase::Idle);
+    }
+
+    #[test]
+    fn expired_pairing_invites_are_the_only_retry_errors_that_renew_invites() {
+        assert!(pairing_invite_needs_renewal("pairing request failed: pairing invite expired"));
+        assert!(pairing_invite_needs_renewal("pairing request failed: pairing invite is already bound to request req-1"));
+        assert!(!pairing_invite_needs_renewal("pairing request failed: certificate pin mismatch"));
+    }
+
+    #[test]
+    fn sync_timing_action_names_do_not_include_request_payloads() {
+        let request = SyncManagementRequest::Pair {
+            invite: "kimo-token://device-pair?secret=private".into(),
+            origin: Some("workstation".into()),
+            display_name: Some("Private device".into()),
+            os: Some("macOS".into()),
+        };
+        assert_eq!(sync_action_name(None), "snapshot");
+        assert_eq!(sync_action_name(Some(&request)), "pair");
+        assert_eq!(sync_action_name(Some(&SyncManagementRequest::Discover)), "discover");
+        assert_eq!(sync_action_name(Some(&SyncManagementRequest::RetryConnect)), "retry_connect");
+        assert_eq!(sync_action_name(Some(&SyncManagementRequest::ResetSecondary)), "reset_secondary");
+    }
+
+    #[test]
+    fn retry_connect_resets_error_and_restores_success_phase() {
+        let mut state = SyncControlState {
+            last_error: Some("WebSocket connection lost: broken pipe".into()),
+            pending_pairing_attempted: true,
+            phase: SyncPhase::Error,
+            ..SyncControlState::default()
+        };
+        assert!(state.last_error.is_some());
+        assert!(state.pending_pairing_attempted);
+        assert_eq!(state.phase, SyncPhase::Error);
+
+        let result = run_sync_action(&mut state, SyncManagementRequest::RetryConnect, None);
+        assert!(result.is_ok());
+        assert_eq!(state.last_error, None);
+        assert!(!state.pending_pairing_attempted);
+        assert_eq!(state.phase, SyncPhase::Success);
+    }
+
+    #[test]
+    fn sync_error_codes_keep_lan_failures_actionable_without_logging_details() {
+        assert_eq!(sync_error_code("LAN/VPN access requires a non-loopback listen address"), "lan_loopback_bind");
+        assert_eq!(sync_error_code("a LAN/VPN listener needs an advertise host such as 192.168.1.20"), "lan_missing_advertise_host");
+        assert_eq!(sync_error_code("cannot start sync listener: address already in use"), "listener_start");
+    }
+
+    #[test]
+    #[ignore = "requires a host with multicast loopback support"]
+    fn mdns_register_and_browse_round_trip() {
+        let port = 54_543;
+        let publisher = ServiceDaemon::new_with_port(port).unwrap();
+        let browser = ServiceDaemon::new_with_port(port).unwrap();
+        let properties = [("v", "1"), ("proto", "tokenme-device-sync/1"), ("role", "primary"), ("id", "qa-primary"), ("name", "kimo-token QA"), ("pin", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), ("caps", "pair,upload")];
+        let service = ServiceInfo::new(MDNS_SERVICE_TYPE, "kimo-token-QA", "kimo-token-qa.local.", "", 47_821, &properties[..]).unwrap().enable_addr_auto();
+        publisher.register(service).unwrap();
+        let events = browser.browse(MDNS_SERVICE_TYPE).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut found = false;
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            if let Ok(ServiceEvent::ServiceResolved(service)) = events.recv_timeout(remaining) {
+                if service.get_property_val_str("id") == Some("qa-primary") && service.get_port() == 47_821 {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        assert!(found, "mDNS publisher was not resolved by the local browser");
+        let _ = browser.stop_browse(MDNS_SERVICE_TYPE);
+        let _ = publisher.unregister("kimo-token-QA._tokenme-sync._tcp.local.");
+        let _ = browser.shutdown();
+        let _ = publisher.shutdown();
+    }
+}

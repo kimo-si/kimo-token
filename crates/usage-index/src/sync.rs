@@ -1,9 +1,9 @@
 //! Cross-machine sync: export this index's events as a gzipped JSONL bundle
 //! plus a manifest, and merge such a bundle back idempotently.
 //!
-//! One Linux machine collects (`tokenme index`) and exports a window of its
-//! local index (`tokenme export`) to `~/tokenme-sync`; every display machine —
-//! macOS panel, Windows panel — merges it with `tokenme import` (the panel
+//! One Linux machine collects (`kimo-token index`) and exports a window of its
+//! local index (`kimo-token export`) to `~/kimo-token-sync`; every display machine —
+//! macOS panel, Windows panel — merges it with `kimo-token import` (the panel
 //! engine runs the same merge automatically). The transport is any
 //! authenticated file channel (scp/rsync/Syncthing); the bundle contract is
 //! transport-independent.
@@ -53,10 +53,22 @@ pub const SYNC_FORMAT: &str = "tokenme-sync/1";
 /// manifest; the cap only stops a corrupt one from exhausting memory.
 const ROW_CAP_SLACK: u64 = 1_000_000;
 
-/// `~/tokenme-sync`: where `export` writes by default and where the panel
+/// `~/kimo-token-sync`: where `export` writes by default and where the panel
 /// engine looks for bundles. A missing directory is normal (no sync set up).
 pub fn default_sync_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join("tokenme-sync"))
+    dirs::home_dir().map(|home| usage_core::paths::migrate_path(&home, "kimo-token-sync", "tokenme-sync"))
+}
+
+// 新版收件目录和可能仍在由旧采集端写入的收件目录都要导入。
+pub fn sync_import_dirs() -> Vec<PathBuf> {
+    let Some(home) = dirs::home_dir() else { return Vec::new() };
+    let current = usage_core::paths::migrate_path(&home, "kimo-token-sync", "tokenme-sync");
+    let legacy = home.join("tokenme-sync");
+    let mut paths = vec![current.clone()];
+    if legacy != current && legacy.is_dir() {
+        paths.push(legacy);
+    }
+    paths
 }
 
 /// This machine's name, used as the default `origin`. `HOSTNAME` is set by
@@ -161,7 +173,7 @@ impl SyncSums {
     }
 }
 
-/// `tokenme-<host>.manifest.json` — small on purpose (a 400-day full export
+/// `kimo-token-<host>.manifest.json` — small on purpose (a 400-day full export
 /// has ~390k keys; a per-key list would balloon it to megabytes). The row
 /// stream is the authority for keys; the manifest is the authority for what
 /// the stream *should* contain.
@@ -278,12 +290,17 @@ pub struct ExportReport {
 }
 
 impl Index {
-    /// Writes `tokenme-<origin>.jsonl.gz` + its manifest into `out_dir`. The
+    /// Writes `kimo-token-<origin>.jsonl.gz` + its manifest into `out_dir`. The
     /// whole read runs in one deferred (snapshot) transaction, so every row's
     /// calls come from the same consistent state. The `.gz` lands via
     /// `*.tmp` + rename and the manifest is written last: a transport can
     /// never observe a half-written bundle.
     pub fn export_sync(&self, opts: &ExportOptions) -> Result<ExportReport> {
+        self.export_sync_for_tools(opts, &[])
+    }
+
+    // 按调用方选定的厂商导出，避免把旧索引中的其他厂商带入同步包。
+    pub fn export_sync_for_tools(&self, opts: &ExportOptions, tool_ids: &[String]) -> Result<ExportReport> {
         let started = Instant::now();
         let origin = opts.origin.trim();
         if origin.is_empty() {
@@ -300,8 +317,8 @@ impl Index {
         let hi = now_ms().saturating_add(1);
         let lo = hi.saturating_sub(days.saturating_mul(86_400_000));
         std::fs::create_dir_all(&opts.out_dir).map_err(|e| Error::io(&opts.out_dir, e))?;
-        let gz_path = opts.out_dir.join(format!("tokenme-{origin}.jsonl.gz"));
-        let manifest_path = opts.out_dir.join(format!("tokenme-{origin}.manifest.json"));
+        let gz_path = opts.out_dir.join(format!("kimo-token-{origin}.jsonl.gz"));
+        let manifest_path = opts.out_dir.join(format!("kimo-token-{origin}.manifest.json"));
 
         // Snapshot read: the ingest writer may hold the WAL write lock, and a
         // deferred transaction only takes a read lock.
@@ -327,7 +344,7 @@ impl Index {
             }
         }
 
-        let tmp_gz = opts.out_dir.join(format!("tokenme-{origin}.jsonl.gz.tmp"));
+        let tmp_gz = opts.out_dir.join(format!("kimo-token-{origin}.jsonl.gz.tmp"));
         let file = File::create(&tmp_gz).map_err(|e| Error::io(&tmp_gz, e))?;
         // A bundle names sessions, projects and local log paths — private by
         // default; the transport reads it as the same user anyway.
@@ -383,6 +400,9 @@ impl Index {
             for ev in evs {
                 let (id, tool, ts_ms, session, project, model, meter, in_tok, cc_tok, cr_tok, out_tok, reason_tok, credits, dedupe_key, source) =
                     ev.map_err(sql_err)?;
+                if !tool_ids.is_empty() && !tool_ids.contains(&tool) {
+                    continue;
+                }
                 let mut row = ExportRow {
                     key: String::new(),
                     tool,
@@ -498,8 +518,8 @@ impl Index {
 
 #[derive(Debug, Clone)]
 pub struct ImportOptions {
-    /// The `tokenme-*.jsonl.gz` to merge; its manifest must sit next to it
-    /// under the same stem (`tokenme-<host>.manifest.json`).
+    /// The `kimo-token-*.jsonl.gz` to merge; its manifest must sit next to it
+    /// under the same stem (`kimo-token-<host>.manifest.json`).
     pub file: PathBuf,
     /// Do everything except commit: parse, merge, reconcile, then roll back.
     pub dry_run: bool,
@@ -554,7 +574,7 @@ impl Index {
             .map_err(|e| Error::Sync(format!("bad manifest {}: {e}", manifest_path.display())))?;
         if manifest.format != SYNC_FORMAT {
             return Err(Error::Sync(format!(
-                "bundle format {:?} is not {SYNC_FORMAT:?}; upgrade the exporting machine's tokenme",
+                "bundle format {:?} is not {SYNC_FORMAT:?}; upgrade the exporting machine's kimo-token",
                 manifest.format
             )));
         }
@@ -1297,7 +1317,7 @@ mod tests {
         assert_eq!(rec.rows, rep.rows);
         assert_eq!(rec.window_lo_ms, rep.window_lo_ms);
         assert_eq!(rec.window_hi_ms, rep.window_hi_ms);
-        assert_eq!(rec.file, "tokenme-linux-origin-1.jsonl.gz");
+        assert_eq!(rec.file, "kimo-token-linux-origin-1.jsonl.gz");
         assert_eq!(rec.sha256.as_deref(), Some(rep.sha256.as_str()));
     }
 

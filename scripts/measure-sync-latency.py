@@ -43,7 +43,7 @@ import re
 import sys
 from collections import OrderedDict
 
-DEFAULT_LOG = "~/Library/Logs/tokenme/panel.log"
+DEFAULT_LOG = "~/Library/Logs/dev.kimo-token.bar/panel.log"
 
 LINE_RE = re.compile(
     r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+.*?\bsync:\s(?P<rest>.*)$"

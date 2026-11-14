@@ -10,7 +10,7 @@
 
 ## 1. 协议版本、扩展与兼容
 
-生产目标 profile 为 `tokenme.plugin/1.0`，WIT 包为 `tokenme:plugin@1.0.0`、world 为 `adapter`；当前 alpha `0.1` 的包不能自动视为生产包。F01 生成并提交 `spec/plugin/v1/` 的 WIT、清单、任务、服务、结果、事件、设置、视图、诊断 schema 与正反样例，冻结为同一个合同版本。生产 crate 的 API 包提供唯一校验器，SDK、宿主、CLI 和作者工具使用同一版本，不能各写宽松解析器。
+生产目标 profile 为 `kimo-token.plugin/1.0`，WIT 包为 `kimo-token:plugin@1.0.0`、world 为 `adapter`；当前 alpha `0.1` 的包不能自动视为生产包。F01 生成并提交 `spec/plugin/v1/` 的 WIT、清单、任务、服务、结果、事件、设置、视图、诊断 schema 与正反样例，冻结为同一个合同版本。生产 crate 的 API 包提供唯一校验器，SDK、宿主、CLI 和作者工具使用同一版本，不能各写宽松解析器。
 
 采用 JSON UTF-8、字段 snake_case、机器枚举固定英文、未知字段拒绝。声明式清单沿用当前 camelCase；两者通过生成类型映射，禁止隐式大小写转换。数组有上限，字符串按 UTF-8 字节计；字典 key 另行校验。所有整数在 `[0, 9007199254740991]`；时间为 UTC Unix ms，日界由独立的时区/周期字段决定。缺失和 `null` 只在声明为 optional 的字段允许；缺失数据不转为 0。浮点仅允许有限的比例/测量值，金额与原生 credits 使用十进制字符串。
 
@@ -22,7 +22,7 @@
 
 ## 2. 包、身份、安装与信任
 
-生产包固定为 `.tokenme-plugin`，规范 ZIP_STORED、排序路径、1980 时间、普通文件 0644、无 comment/extra/目录项，拒绝大小写别名、Windows 保留名、穿越、链接与重解析点。单文件 32 MiB、整包及解包总量 64 MiB、最多 64 文件。载荷严格为清单、组件、清单引用资源、LICENSE、build-info、checksums、signature；设置和视图**内嵌 manifest**，不另设二选一的 schema 文件。若以后资源数不足，升 profile 修改限制。
+生产包固定为 `.kimo-token-plugin`，规范 ZIP_STORED、排序路径、1980 时间、普通文件 0644、无 comment/extra/目录项，拒绝大小写别名、Windows 保留名、穿越、链接与重解析点。单文件 32 MiB、整包及解包总量 64 MiB、最多 64 文件。载荷严格为清单、组件、清单引用资源、LICENSE、build-info、checksums、signature；设置和视图**内嵌 manifest**，不另设二选一的 schema 文件。若以后资源数不足，升 profile 修改限制。
 
 清单在 alpha 基础上增加确定区块：`publisher`、`hostRequirements`、`platforms`、`permissionProfile`、`capabilities`、`auth`、`events`、`notifications`、`views`、`stateSchemaVersion`。permissionProfile 为 standard-v1 或 credential-maintenance-v1，权限不因签名自动扩大。tool 改为非空 tools 数组，各 task/source/endpoint/setting/view 明确所属 tool ID。ID/任务/资源包内唯一；SemVer 拒绝前导零和空 prerelease。国内外版独立 ID/授权/账号/路径/缓存/周期。字段映射与可选能力语义见补充合同 §8。
 
@@ -30,7 +30,7 @@
 
 `build-info` 必含源树摘要、源码修订（不可用时明确 local）、SDK/API/profile、编译器/依赖锁摘要、模块摘要和构建模式。`pack` 只使用成功构建凭据对应的源树与组件；本地摘要不能证明发布者诚实编译，官方发布还需构建流水线记录和可下载源码修订。重复打包通过只证明同一组件的归档确定性。
 
-生产签名为 Ed25519。消息固定为 UTF-8 `tokenme.plugin.package/v1`、一个 LF 字节、checksums 原始字节的 SHA-256 二进制值。checksums 精确覆盖所有载荷（包含 manifest 的 publisher、API 和资源），不包含自身和 signature。信封固定字段 `schema, publisher_id, key_id, algorithm, integrity_sha256, signature_base64`，algorithm 只能为 ed25519。签名发布者必须与被签清单一致，密钥绑定来自本地信任库，包内公钥不是信任根；生产禁用 alpha 的元数据变体标记。
+生产签名为 Ed25519。消息固定为 UTF-8 `kimo-token.plugin.package/v1`、一个 LF 字节、checksums 原始字节的 SHA-256 二进制值。checksums 精确覆盖所有载荷（包含 manifest 的 publisher、API 和资源），不包含自身和 signature。信封固定字段 `schema, publisher_id, key_id, algorithm, integrity_sha256, signature_base64`，algorithm 只能为 ed25519。签名发布者必须与被签清单一致，密钥绑定来自本地信任库，包内公钥不是信任根；生产禁用 alpha 的元数据变体标记。
 
 生产策略：预装官方包使用应用内信任根；第三方本地包先展示发布者、摘要和权限差异，用户信任指定发布者密钥后安装；无签名包仅开发 profile 的明确本地开关可安装，不能进入正常 profile。初次信任未知发布者本来就是用户操作，框架不能代用户扩大信任范围。开发者机器的本地构建不等于发布签名完成。
 
@@ -189,7 +189,7 @@ NotificationRule 固定为 `id, tool_id, policy_kind:quota_percent_low|usage_thr
 
 ### 7.1 通知的统一设置与按应用设置
 
-用户可以在 TokenMe“通知”页统一设置默认规则，也可以在某个应用详情中单独设置。例如全局为“剩余额度 ≤20% 提醒”，Devin 可单独改为 ≤10%，其他应用继续跟随 20%。应用指 tool_ref，不等同于插件包；同包多个应用不相互覆盖。
+用户可以在 kimo-token“通知”页统一设置默认规则，也可以在某个应用详情中单独设置。例如全局为“剩余额度 ≤20% 提醒”，Devin 可单独改为 ≤10%，其他应用继续跟随 20%。应用指 tool_ref，不等同于插件包；同包多个应用不相互覆盖。
 
 设置分为两个层面：
 
@@ -243,7 +243,7 @@ task_invocations 记录身份/generation/grants/settings/lease、阶段和开始
 
 ## 10. 实施交付门
 
-F01 必须把本合同的每个 type/capability/service 对应到 v1 schema/SDK/绑定及正反样例；缺失项是合同缺陷，不能只生成清单后进入生产支持列表。F02/F03 的信任和隔离门通过前，任何第三方包不得加载进真实 TokenMe profile。F07/F08 完成前，不能宣称品牌、开关、语言、通知已动态接入。F10 的写操作与估算门通过前，平台支持列表只列已验收的读取能力。
+F01 必须把本合同的每个 type/capability/service 对应到 v1 schema/SDK/绑定及正反样例；缺失项是合同缺陷，不能只生成清单后进入生产支持列表。F02/F03 的信任和隔离门通过前，任何第三方包不得加载进真实 kimo-token profile。F07/F08 完成前，不能宣称品牌、开关、语言、通知已动态接入。F10 的写操作与估算门通过前，平台支持列表只列已验收的读取能力。
 
 每票需提交实现、类型/schema、作者样例、拒绝用例、最终组件运行、宿主接入、诊断证据和兼容说明。Windows/macOS/Linux、桌面/CLI/collector、真实设备互通分别标记 validated / build_only / unverified；不将一种环境的成功外推给其他环境。
 

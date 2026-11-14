@@ -53,7 +53,7 @@ use crate::QuotaProbe;
 /// The vendor default and its global sibling, in the order the probe tries them.
 const BASES: &[&str] = &["https://api.kimi.com/coding/v1", "https://api.kimi.ai/coding/v1"];
 const USAGE_PATH: &str = "/usages";
-const USER_AGENT: &str = concat!("tokenme/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("kimo-token/", env!("CARGO_PKG_VERSION"));
 
 /// `(payload key, the label the product prints, window minutes)`.
 const WINDOWS: &[(&str, &str, i64)] = &[

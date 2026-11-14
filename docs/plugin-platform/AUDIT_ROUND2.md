@@ -21,7 +21,7 @@
 - [设计 review 说明与运行入口](review/README.md)、[可执行模型/独立期望](review/verify_contracts.py)。
 - 本轮设计 review 结果（本地记录：`prototypes/plugin-platform-v1/artifacts/audit/round2/design-review.json`）：含 runId、文档/schema/模型摘要和每次独立历史。
 
-反例属于 document_counterexample，**不是**运行中的 TokenMe/供应商攻击 PoC；review 报告强制 production_runtime_validated=false。归档中的首轮真实工具缺陷红/绿结果继续有效，但不冒充本轮生产边界已被实测。
+反例属于 document_counterexample，**不是**运行中的 kimo-token/供应商攻击 PoC；review 报告强制 production_runtime_validated=false。归档中的首轮真实工具缺陷红/绿结果继续有效，但不冒充本轮生产边界已被实测。
 
 ## 3. 本轮发现和处理
 
@@ -70,7 +70,7 @@ review 的三个严格投影为 [Scope](review/scope.schema.json)、[通知配�
 1. F01 完整 v1 生成合同、SDK 绑定和 TestKit 尚未交付。本轮只提供设计输入和严格投影，不能将“生成正式 schema”视为已经发生。
 2. F03 的 native 内存/JIT/累计资源、IPC、取消及恶意 Component，F02 的签名/handle 安装/真实升级 crash matrix，仍须实际实现和实测。
 3. 凭据维护 profile 必须在真实锁/第一方客户端并发/厂商刷新行为中证明；CAS 本身不构成远端 exactly-once。
-4. F06/F08 的事务/outbox/OS 投递恢复、全局与应用策略 UI 以及实际索引/汇总/诊断，仍须接入生产 TokenMe。
+4. F06/F08 的事务/outbox/OS 投递恢复、全局与应用策略 UI 以及实际索引/汇总/诊断，仍须接入生产 kimo-token。
 5. F11.2 清册全部为 pending；跨平台、CLI/collector、真实设备和安装保留数据仍未验收。主线更新后的接口差异仍须在隔离分支比较集成。
 6. 新增F13/G01—G07尚未实现。A按WB-P0、B按WB-D0—D3逐项实测接口、认证、会话隔离、流/长任务、取消/未知、执行权限及去重。本机Gateway会话元数据均陈旧，不能据代码存在标ready；通用设计模型不替代实时门。
 

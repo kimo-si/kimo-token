@@ -3,7 +3,7 @@ name = "usage-adapter-codebuddy"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "tokenme source adapter: codebuddy"
+description = "kimo-token source adapter: codebuddy"
 
 [dependencies]
 usage-core.workspace = true

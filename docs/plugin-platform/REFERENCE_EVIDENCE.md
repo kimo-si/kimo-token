@@ -11,7 +11,7 @@
 
 | 项目 | 标准参考 | 新作者项目 |
 | --- | --- | --- |
-| 插件 ID | org.example.tokenme.reference | org.example.audit.author-ide |
+| 插件 ID | org.example.kimo-token.reference | org.example.audit.author-ide |
 | 工具 ID | example_ide | audit_author_ide |
 | 用量/配额任务 | collect-usage / read-quota | audit-usage / audit-quota |
 | 独立预期 | 550 Token，25% 配额 | 560 Token，37% 配额 |
@@ -40,7 +40,7 @@
 
 | 字段 | 标准参考 | 新作者项目 |
 | --- | --- | --- |
-| 包名 | org.example.tokenme.reference_0.1.0.tokenme-plugin | org.example.audit.author-ide_0.1.0.tokenme-plugin |
+| 包名 | org.example.kimo-token.reference_0.1.0.kimo-token-plugin | org.example.audit.author-ide_0.1.0.kimo-token-plugin |
 | bytes | 245072 | 244877 |
 | package SHA-256 | 10e29be5c03354c82405e77992702a352171f0345381acea84e963ef7c7624a4 | 7ca72260b3d032225e1ab0ee25e0e5fdb350878823cb59a0bd86e1072bd11e77 |
 | source tree SHA-256 | cee1a7ca6b876059da5f491817b45c5cc9c320984882f5d567dd8fad5434e080 | de4a128179f983955373fcbed9f0b17b9c14e5b93978fe4bc4e05c8ae1cdb7f4 |
@@ -53,13 +53,13 @@ Rust 为 1.98.1，Python 为 3.14.6；Wasmtime/WASI 49.0.0、wit-bindgen 0.63.0�
 
 mainAppIntegrated=false。参考账本仅单个合成工具/账号、进程内去重；不持久提交核心游标。配额/源数据来自 fixtures，没有真实网络、认证或第一方写入。资源包含每 memory 上限/fuel/epoch，但没有生产累计 Store/JIT/全局内存保证；便携安装器仍不保证抵御同用户恶意目录竞态。
 
-未验证实际 TokenMe 的索引/缓存/设置/品牌/语言/通知/诊断界面、真实认证/签到/SQLite/估算/价格、升级迁移、CLI/collector、macOS/Linux 和真实跨设备。完整上线阻断项及 A01—A22 追踪见审计。以上耗时为整套开发复验，不是首屏/用户任务性能指标。
+未验证实际 kimo-token 的索引/缓存/设置/品牌/语言/通知/诊断界面、真实认证/签到/SQLite/估算/价格、升级迁移、CLI/collector、macOS/Linux 和真实跨设备。完整上线阻断项及 A01—A22 追踪见审计。以上耗时为整套开发复验，不是首屏/用户任务性能指标。
 
 本页保留原审计运行的摘要；当时未提交、推送或发布。本次将设计和参考源码提交到 plug 分支；build/dist/sandbox/artifacts 运行记录仍保留本地，不包含在源码提交中。后续改动必须重新生成对应证据，不能把本页快照当作未来源码的通过记录。
 
 ## plug分支提交前复验（2026-10-20）
 
-完整verify通过，包含Python回归、Rust原生测试、实际Wasm构建/运行、重复打包、隔离安装和未知插件ID。运行报告保留本地，可按参考工程命令重建；不计作生产TokenMe或Agent网关验收。
+完整verify通过，包含Python回归、Rust原生测试、实际Wasm构建/运行、重复打包、隔离安装和未知插件ID。运行报告保留本地，可按参考工程命令重建；不计作生产kimo-token或Agent网关验收。
 
 - runId: `c36af14e64964f029f3c69a6300a5e23`
 - sourceTreeSha256: `0a76176b4a78029db4da7d00cfcbb2c0606c3bd49a08936aa0cbc6acbcea2cb9`

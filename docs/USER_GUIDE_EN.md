@@ -1,4 +1,4 @@
-# TokenMe User Guide
+# kimo-token User Guide
 
 > Version: 0.1.8 · Updated: 2026-10-13 · Audience: daily users · Covers both the CLI and the menu-bar panel · [中文版](USER_GUIDE.md)
 
@@ -13,51 +13,44 @@
 | Measure TTFT (time to first token) and TPS | Panel → Speed (passive measurement; Codex / Claude Code can also fire one short live probe) |
 | Each subscription's remaining quota and reset countdown | The quota strip below Overview (a system notification fires when a window crosses 80% or is exhausted) |
 | One-click daily check-in | Panel → Tools, in the row header (Trae CN, Qoder, Qoder CN, MiniMax Code, WorkBuddy CN, FunIDE) |
-| Fold in usage from servers and containers | One-click deploy from the panel footer's server button, or install the Linux collector by hand (see §4); the strict HTTPS device path is available in the device-sync sheet or through `tokenme sync run` (see §4.1) |
-| Use the strict device-sync path | Panel primary/secondary management or `tokenme sync run/stop/status` over pinned HTTPS/TCP/TLS 1.3 (see §4.1) |
-| Cost caps for tools without a vendor-published limit | `tokenme budget set` (see §5) |
+| Fold in usage from servers and containers | One-click deploy from the panel footer's server button, or install the Linux collector by hand (see §4); the strict HTTPS device path is available in the device-sync sheet or through `kimo-token sync run` (see §4.1) |
+| Use the strict device-sync path | Panel primary/secondary management or `kimo-token sync run/stop/status` over pinned HTTPS/TCP/TLS 1.3 (see §4.1) |
+| Cost caps for tools without a vendor-published limit | `kimo-token budget set` (see §5) |
 | Digits or an icon living in the menu bar | Six tray display modes to choose from (see §3) |
 | Data never goes to a third party | Read-only indexing by default; multi-device sync sends only to your approved primary, with no telemetry or third-party proxy (see §7) |
 
 ## 1. Install
 
-macOS (Homebrew, recommended):
+macOS: download the DMG from [Releases](https://github.com/kimo-si/kimo-token/releases/latest) and drag the app to Applications. Until the first release is available, [build from source](../README_EN.md#build-from-source). Homebrew distribution is not configured.
+
+Windows: download `kimo_token_<v>_x64-setup.exe` from [Releases](https://github.com/kimo-si/kimo-token/releases/latest). The installer installs both the panel and the CLI; the CLI lives at `<install directory>\bin\kimo-token.exe` and is added to PATH automatically ("Only me" adds your user PATH, "All users" the system PATH). Open a new terminal after installing and run `kimo-token --help`. Upgrades keep the same PATH entry; uninstall removes only the entry this installation added.
+
+Linux (headless collector): download `kimo-token-cli-<v>-<arch>-linux-musl.tar.gz` (fully static — no Rust or Python needed on that machine):
 
 ```bash
-brew tap Bencibr/tokenme https://github.com/Bencibr/homebrew-tokenme
-brew trust bencibr/tokenme        # once — brew 6 asks you to trust third-party casks
-brew install --cask tokenme       # the menu-bar panel
-brew install tokenme-cli          # the CLI
-```
-
-Windows: download `TokenMe_<v>_x64-setup.exe` from [Releases](https://github.com/Bencibr/tokenme/releases/latest). The installer installs both the panel and the CLI; the CLI lives at `<install directory>\bin\tokenme.exe` and is added to PATH automatically ("Only me" adds your user PATH, "All users" the system PATH). Open a new terminal after installing and run `tokenme --help`. Upgrades keep the same PATH entry; uninstall removes only the entry this installation added.
-
-Linux (headless collector): download `tokenme-cli-<v>-<arch>-linux-musl.tar.gz` (fully static — no Rust or Python needed on that machine):
-
-```bash
-tar xzf tokenme-cli-<v>-x86_64-linux-musl.tar.gz && cd tokenme-cli-<v>-x86_64-linux-musl
+tar xzf kimo-token-cli-<v>-x86_64-linux-musl.tar.gz && cd kimo-token-cli-<v>-x86_64-linux-musl
 ./install-linux.sh --every 15 --push you@display-host
 ```
 
-That one line puts the binary in `~/.local/bin` and installs a timer that exports every 15 minutes and scp's each fresh bundle to the display machine's `~/tokenme-sync`; the panel there merges it on its next pass, shown in the **Multi-device sync** badge. The timer is a systemd `--user` unit, degrading to an equivalent cron job on machines without a reachable user manager (containers, bare ssh) — it runs without a login session once `loginctl enable-linger` is on (on a headless machine the installer prints that one line for you). `--uninstall` removes the binary, the generated scripts and the timer; your data (index, bundles) stays. Without `--push`, move the `~/tokenme-sync` folder however you like (Syncthing, a mount, a nightly rsync) — merging bundles is idempotent.
+That one line puts the binary in `~/.local/bin` and installs a timer that exports every 15 minutes and scp's each fresh bundle to the display machine's `~/kimo-token-sync`; the panel there merges it on its next pass, shown in the **Multi-device sync** badge. The timer is a systemd `--user` unit, degrading to an equivalent cron job on machines without a reachable user manager (containers, bare ssh) — it runs without a login session once `loginctl enable-linger` is on (on a headless machine the installer prints that one line for you). `--uninstall` removes the binary, the generated scripts and the timer; your data (index, bundles) stays. Without `--push`, move the `~/kimo-token-sync` folder however you like (Syncthing, a mount, a nightly rsync) — merging bundles is idempotent.
 
 The macOS panel can also be built from source (ad-hoc signed; right-click → Open on first launch):
 
 ```bash
-./scripts/build-macos.sh          # produces TokenMe.app and a drag-install DMG
+./scripts/build-macos.sh          # produces kimo-token.app and a drag-install DMG
 ```
 
 ## 2. First run
 
 ```bash
-tokenme detect        # 1. which of your tools were found, and where their logs live
-tokenme daily --days 7
-tokenme quota
+kimo-token detect        # 1. which of your tools were found, and where their logs live
+kimo-token daily --days 7
+kimo-token quota
 ```
 
 ## 3. The menu-bar panel (macOS · Windows)
 
-Built by `scripts/build-macos.sh` on macOS and by `pnpm tauri build --bundles nsis` in `apps/tokenme-bar` on Windows. A left-click on the dual-ring icon toggles the panel; a right-click opens the menu (refresh, data dir, autostart, quit).
+Built by `scripts/build-macos.sh` on macOS and by `pnpm tauri build --bundles nsis` in `apps/kimo-token-bar` on Windows. A left-click on the dual-ring icon toggles the panel; a right-click opens the menu (refresh, data dir, autostart, quit).
 
 ### 3.1 The five pages
 
@@ -90,23 +83,23 @@ Refresh cadence controls index re-scanning; vendor quota answers are cached for 
 
 ### 3.5 OpenCode official quota
 
-TokenMe reads only the official OpenCode Go provider's quota. The credential comes, in order, from `OPENCODE_API_KEY`; OpenCode V2's own store — the `credential` table of `opencode.db`, where the desktop app and the CLI both write their account login (`integration_id` `opencode-go` or `opencode`; `access` for `type:"oauth"`, `key` for `type:"api"`, and an expired token is never refreshed here — OpenCode owns that row); the `provider.<id>.options.apiKey` of any provider in `opencode.json` (tried in order: `$XDG_CONFIG_HOME/opencode/opencode.json`, `~/.config/opencode/opencode.json`, and on macOS also `~/Library/Application Support/opencode/opencode.json`; that provider's `options.baseURL` must be `https://opencode.ai/zen/go/v1`); and finally the legacy `~/.local/share/opencode/auth.json`, read for exactly the two ids OpenCode writes a Go key under. A custom proxy address is never taken for official quota credentials. The OpenCode row shows three windows — 5 hours, 7 days and monthly. If the row never appears, check, in order: Advanced → Check quotas automatically, the OpenCode switch under Quota checks by tool, and the quota poll lines in `panel.log` — a probe that ran and came back empty adds `probes-empty: [opencode:<why>]` to that same line, with the vendor's own 401/403, an expired token, or no official credential as the why.
+kimo-token reads only the official OpenCode Go provider's quota. The credential comes, in order, from `OPENCODE_API_KEY`; OpenCode V2's own store — the `credential` table of `opencode.db`, where the desktop app and the CLI both write their account login (`integration_id` `opencode-go` or `opencode`; `access` for `type:"oauth"`, `key` for `type:"api"`, and an expired token is never refreshed here — OpenCode owns that row); the `provider.<id>.options.apiKey` of any provider in `opencode.json` (tried in order: `$XDG_CONFIG_HOME/opencode/opencode.json`, `~/.config/opencode/opencode.json`, and on macOS also `~/Library/Application Support/opencode/opencode.json`; that provider's `options.baseURL` must be `https://opencode.ai/zen/go/v1`); and finally the legacy `~/.local/share/opencode/auth.json`, read for exactly the two ids OpenCode writes a Go key under. A custom proxy address is never taken for official quota credentials. The OpenCode row shows three windows — 5 hours, 7 days and monthly. If the row never appears, check, in order: Advanced → Check quotas automatically, the OpenCode switch under Quota checks by tool, and the quota poll lines in `panel.log` — a probe that ran and came back empty adds `probes-empty: [opencode:<why>]` to that same line, with the vendor's own 401/403, an expired token, or no official credential as the why.
 
 **Open Design** quota comes from the desktop app's own sign-in: the `vela_ctrl_…` control key in `profiles.prod` of `~/.amr/config.json` (`OPEN_DESIGN_HOME` moves the directory), read-only, for the Design Plan's 5-hour and 7-day windows. The runtime key `sk-amr-…` only authorises model requests and is refused by the control plane; the wallet balance is not a window and is not drawn. An expired sign-in makes the row disappear; signing in to Open Design again restores it.
 
 ### 3.6 Automatic token renewal
 
-Three tools keep a short-lived login on disk — MiniMax Code (about an hour), Kimi Code (the vendor's 15-minute schedule) and Cline (the gateway token, one hour) — and tokenme renews each in place as it expires: the refresh token in the tool's own credential file is exchanged for a fresh pair, written back atomically in that tool's own format. The write-back is what makes the renewal safe — a rotation that never lands on disk is a rotation already spent, and the tool's own next refresh would find its login dead. Each probe renews only the login it is actually reading; a static API key is read, never written. A failed exchange changes nothing, and the row keeps its last real number for up to six hours (the probe cache's grace). Every other probe reads credentials and never writes them — the WorkBuddy credential tokenme does store comes from `tokenme workbuddy-login`, a command you ran, not from a probe.
+Three tools keep a short-lived login on disk — MiniMax Code (about an hour), Kimi Code (the vendor's 15-minute schedule) and Cline (the gateway token, one hour) — and kimo-token renews each in place as it expires: the refresh token in the tool's own credential file is exchanged for a fresh pair, written back atomically in that tool's own format. The write-back is what makes the renewal safe — a rotation that never lands on disk is a rotation already spent, and the tool's own next refresh would find its login dead. Each probe renews only the login it is actually reading; a static API key is read, never written. A failed exchange changes nothing, and the row keeps its last real number for up to six hours (the probe cache's grace). Every other probe reads credentials and never writes them — the WorkBuddy credential kimo-token does store comes from `kimo-token workbuddy-login`, a command you ran, not from a probe.
 
 ### 3.7 The two WorkBuddy editions
 
-Domestic **WorkBuddy** (`workbuddy_cn`) reads `~/.workbuddy`; international **WorkBuddy AI** (`workbuddy`) reads `~/.workbuddy-ai`. Their usage, quota caches and host-exit gates are separate. Domestic polling checks the day's activity and claims any eligible, unclaimed day; with Advanced → Auto check-in enabled, claims continue with the WorkBuddy client closed for as long as TokenMe runs. The master gate and the per-tool switch still stop requests. Confirmed days are remembered per account and expire at Beijing midnight.
+Domestic **WorkBuddy** (`workbuddy_cn`) reads `~/.workbuddy`; international **WorkBuddy AI** (`workbuddy`) reads `~/.workbuddy-ai`. Their usage, quota caches and host-exit gates are separate. Domestic polling checks the day's activity and claims any eligible, unclaimed day; with Advanced → Auto check-in enabled, claims continue with the WorkBuddy client closed for as long as kimo-token runs. The master gate and the per-tool switch still stop requests. Confirmed days are remembered per account and expire at Beijing midnight.
 
 FunIDE uses the login state written by its official client. Polling reads `/billing/balance`, calls `/billing/checkin` only when the activity is open and today is unclaimed, then reads the balance again to confirm the result. Turning off Advanced → Auto check-in stops automatic claims; the row-header manual action remains available.
 
 ### 3.8 Quota banners
 
-The moment a window crosses **80%** used, a system notification fires (`Qoder · 5 hours` · 83% used · 17% left), and a second one when it is used up (100%). Only windows the vendors actually meter get banners; the §5 budgets you set yourself stay panel-only. **Alert tiers** choose 80% and 100% / Only 100% / Off. **Plan expiry reminder** chooses 5, 3, or 1 day before expiry, or Off; it defaults to 3 days and fires once when an existing package row enters that range. **Muted tools** silences chosen windows — while muted the tier is still recorded, so un-muting never replays a banner you missed. A banner marks the crossing, not the state: each line fires once per window per instance, the fact persists (`notify-state.json` beside the index), and a reset window re-arms silently. Nothing is probed while the panel is quit, so a crossing that happened in the gap is not replayed. The first banner that is actually due raises the system's notification permission prompt once; if nothing arrives after that, the toggle lives in the OS settings (macOS System Settings → Notifications → TokenMe). On macOS the quota section offers its own guide line: **Enable** / **Open Settings** / Dismiss. A bare `cargo run` has no app identity and never posts a banner (the log says so).
+The moment a window crosses **80%** used, a system notification fires (`Qoder · 5 hours` · 83% used · 17% left), and a second one when it is used up (100%). Only windows the vendors actually meter get banners; the §5 budgets you set yourself stay panel-only. **Alert tiers** choose 80% and 100% / Only 100% / Off. **Plan expiry reminder** chooses 5, 3, or 1 day before expiry, or Off; it defaults to 3 days and fires once when an existing package row enters that range. **Muted tools** silences chosen windows — while muted the tier is still recorded, so un-muting never replays a banner you missed. A banner marks the crossing, not the state: each line fires once per window per instance, the fact persists (`notify-state.json` beside the index), and a reset window re-arms silently. Nothing is probed while the panel is quit, so a crossing that happened in the gap is not replayed. The first banner that is actually due raises the system's notification permission prompt once; if nothing arrives after that, the toggle lives in the OS settings (macOS System Settings → Notifications → kimo-token). On macOS the quota section offers its own guide line: **Enable** / **Open Settings** / Dismiss. A bare `cargo run` has no app identity and never posts a banner (the log says so).
 
 ### 3.9 How fresh the data is
 
@@ -128,7 +121,7 @@ The panel can show numbers about a second after it can paint: the first frame is
 
 ## 4. Cross-machine sync (Linux collector → macOS/Windows panel)
 
-Numbers from any machine can meet in one panel. A **collector** — the fully static Linux CLI — exports a window of its index into a folder; every **display machine** (macOS or Windows panel) merges that folder automatically. The transport is any file copy you already trust: tokenme never opens a port and has no accounts of its own.
+Numbers from any machine can meet in one panel. A **collector** — the fully static Linux CLI — exports a window of its index into a folder; every **display machine** (macOS or Windows panel) merges that folder automatically. The transport is any file copy you already trust: kimo-token never opens a port and has no accounts of its own.
 
 Collector side, the minimal path (one line — same as §1):
 
@@ -136,18 +129,18 @@ Collector side, the minimal path (one line — same as §1):
 ./install-linux.sh --every 15 --push you@display-host
 ```
 
-The timer (systemd `--user`, cron fallback) exports `~/tokenme-sync/tokenme-<host>.jsonl.gz` every 15 minutes and scp's each fresh bundle to the display machine's `~/tokenme-sync`. No push target? Drop `--push` and move that folder your own way (Syncthing, a mount, a nightly rsync) — or skip the installer entirely and run `tokenme export` by hand (defaults: last 30 days into `~/tokenme-sync`). A quiet or logless machine still produces a valid bundle (`rows 0`) — the timer never fails on a slow day.
+The timer (systemd `--user`, cron fallback) exports `~/kimo-token-sync/kimo-token-<host>.jsonl.gz` every 15 minutes and scp's each fresh bundle to the display machine's `~/kimo-token-sync`. No push target? Drop `--push` and move that folder your own way (Syncthing, a mount, a nightly rsync) — or skip the installer entirely and run `kimo-token export` by hand (defaults: last 30 days into `~/kimo-token-sync`). A quiet or logless machine still produces a valid bundle (`rows 0`) — the timer never fails on a slow day.
 
-Display side needs no setup: every panel pass merges any `tokenme-*.jsonl.gz` it finds in `~/tokenme-sync`, and the badge (§3.10) shows the newest merge per machine. Merges are idempotent — re-importing the same file changes nothing. To rehearse or go manual: `tokenme import <bundle>` (add `--dry-run` to parse and reconcile, then roll back).
+Display side needs no setup: every panel pass merges any `kimo-token-*.jsonl.gz` it finds in `~/kimo-token-sync`, and the badge (§3.10) shows the newest merge per machine. Merges are idempotent — re-importing the same file changes nothing. To rehearse or go manual: `kimo-token import <bundle>` (add `--dry-run` to parse and reconcile, then roll back).
 
-**The panel can do the SSH half for you.** Click the server icon in the panel footer and add a machine: address, user, and the SSH password once (a private-key file works too, and both accept `~`). The wizard pins the host's SSH fingerprint on first connect, generates a dedicated key pair, plants its public half in the remote `~/.ssh/authorized_keys`, uploads the static collector to `~/.tokenme/bin/`, runs the first export, and pulls + merges the bundle — the whole install is one guided flow with a per-step log. After that the panel re-pulls every 15 minutes (configurable per server), and each fresh merge shows up like any file-based source, per machine. The password is used for that single setup connection and is never written anywhere. Removing a server cleans up both ends: the collector binary and the key line are deleted on the remote machine, and the pinned fingerprint and history are dropped locally.
+**The panel can do the SSH half for you.** Click the server icon in the panel footer and add a machine: address, user, and the SSH password once (a private-key file works too, and both accept `~`). The wizard pins the host's SSH fingerprint on first connect, generates a dedicated key pair, plants its public half in the remote `~/.ssh/authorized_keys`, uploads the static collector to `~/.kimo-token/bin/`, runs the first export, and pulls + merges the bundle — the whole install is one guided flow with a per-step log. After that the panel re-pulls every 15 minutes (configurable per server), and each fresh merge shows up like any file-based source, per machine. The password is used for that single setup connection and is never written anywhere. Removing a server cleans up both ends: the collector binary and the key line are deleted on the remote machine, and the pinned fingerprint and history are dropped locally.
 
 **Security & limits**
 
-- No listener, no cloud, no sync account: authentication is entirely the channel you pick (ssh keys for scp, Syncthing TLS + device IDs). tokenme stores no sync credentials. The in-panel SSH flow keeps that property: one password authenticates one setup connection, the host key is pinned on first sight (shown in the panel), and steady-state trust is a single dedicated key line in the remote `authorized_keys` — revocable by deleting that line or removing the server in the panel.
+- No listener, no cloud, no sync account: authentication is entirely the channel you pick (ssh keys for scp, Syncthing TLS + device IDs). kimo-token stores no sync credentials. The in-panel SSH flow keeps that property: one password authenticates one setup connection, the host key is pinned on first sight (shown in the panel), and steady-state trust is a single dedicated key line in the remote `authorized_keys` — revocable by deleting that line or removing the server in the panel.
 - Every import is validated before a single row lands: the bundle's sha256 against its manifest, the batch's token sums against the manifest, and a format + schema-version gate. The merge runs in one transaction — any failure rolls back whole, the file is kept on disk, and nothing merges.
 - Row counts are capped (the manifest's count plus slack), so a corrupt file can't exhaust memory. A bundle can only move a row forward — the growth predicate refuses lower counts — and imports never delete: rows a collector purged later are reported as stale, not removed.
-- On unix, bundles and manifests are written `0600`. A bundle carries what the index already carries — token counts, model/session/project names, local log paths — never code, prompts or credentials. Treat `~/tokenme-sync` like the index itself: whoever can write into that folder (your account, or anyone you share it with) can inject usage rows — merges are duplicate-safe, not signed.
+- On unix, bundles and manifests are written `0600`. A bundle carries what the index already carries — token counts, model/session/project names, local log paths — never code, prompts or credentials. Treat `~/kimo-token-sync` like the index itself: whoever can write into that folder (your account, or anyone you share it with) can inject usage rows — merges are duplicate-safe, not signed.
 
 ### 4.1 Strict HTTPS multi-device channel (CLI/service integration)
 
@@ -155,17 +148,17 @@ This is a strict channel alongside the legacy file-bundle path above: the second
 
 The protocol library, TLS transport, shared SQLite outbox/journal/FIFO scheduler, authenticated status/recovery, CLI `sync run/stop/status` and the lower-level `invite/approve/open-stream/serve/upload` paths are delivered, along with the Panel's primary/secondary pairing and device-management sheet. After a complete invite is paired, the secondary persists the endpoint, certificate pin, primary binding and identity; the runtime obtains the stream/epoch, snapshots the local origin, writes journal/outbox state, uploads over TLS and ACKs it. Ordinary users do not enter a stream or generation. The legacy `export/import` file path and SSH importer remain separate. Windows has a `cfg(windows)` current-SID private-DACL implementation, but this machine cannot compile or run that branch, so it remains unverified.
 
-The Panel primary can start/stop the listener and generate a user-private certificate and invite; a secondary can click “Pair this device” for a discovered LAN primary, paste a complete invite, or scan a QR code. Discovery pairing first requests a five-minute, one-time invite over a certificate-pinned TLS channel, then follows the existing signed request and primary approval flow. The primary approves/rejects, pauses/resumes or revokes. On Ubuntu/headless machines, use the same saved configuration with `tokenme sync run`; `sync stop` uses a private user Unix socket and `sync status` shows pending data, last connection and errors:
+The Panel primary can start/stop the listener and generate a user-private certificate and invite; a secondary can click “Pair this device” for a discovered LAN primary, paste a complete invite, or scan a QR code. Discovery pairing first requests a five-minute, one-time invite over a certificate-pinned TLS channel, then follows the existing signed request and primary approval flow. The primary approves/rejects, pauses/resumes or revokes. On Ubuntu/headless machines, use the same saved configuration with `kimo-token sync run`; `sync stop` uses a private user Unix socket and `sync status` shows pending data, last connection and errors:
 
 When the primary enables “Allow LAN”, it publishes an `_tokenme-sync._tcp.local.` mDNS/Bonjour candidate. The pairing sheet scans for 1.5 seconds and shows the address, device ID and certificate pin. “Pair this device” never broadcasts an invite secret: it requests a temporary invite over a pin-verified TLS channel, then uses the existing signed request and primary approval. If discovery fails or permissions are denied, the UI explains the local-network permission, UDP 5353 and listener requirements and keeps QR/full-invite fallback. Stopping the primary unregisters the advertisement; a restart restores only a role that was explicitly enabled.
 
 ```bash
-tokenme sync upload \
+kimo-token sync upload \
   --endpoint https://192.168.1.20:47821 \
-  --server-name tokenme-primary \
-  --trust-cert ~/.config/tokenme/primary-cert.pem \
+  --server-name kimo-token-primary \
+  --trust-cert ~/.config/kimo-token/primary-cert.pem \
   --pin-sha256 <64-hex-cert-sha256> \
-  --identity ~/.config/tokenme/device-identity.json \
+  --identity ~/.config/kimo-token/device-identity.json \
   --origin laptop \
   --primary-id <primary-id> --stream-id <stream-id> \
   --data-epoch 1 --generation 1
@@ -174,18 +167,18 @@ tokenme sync upload \
 Low-level primary service example (the Panel can generate the certificate and start the service automatically):
 
 ```bash
-tokenme sync serve --primary-id <primary-id> \
+kimo-token sync serve --primary-id <primary-id> \
   --bind 0.0.0.0:47821 --cert primary-cert.pem --key primary-key.pem --allow-lan
 ```
 
 Low-level CLI invite submission (ordinary users should prefer the complete invite; the secret comes from stdin so it is not exposed in the process list):
 
 ```bash
-printf '%s\n' '<invite-secret-hex>' | tokenme sync pair \
-  --endpoint https://192.168.1.20:47821 --server-name tokenme-primary \
+printf '%s\n' '<invite-secret-hex>' | kimo-token sync pair \
+  --endpoint https://192.168.1.20:47821 --server-name kimo-token-primary \
   --trust-cert primary-cert.pem --pin-sha256 <64-hex-cert-sha256> \
   --invite-id <invite-id> --invite-secret-hex - \
-  --identity ~/.config/tokenme/device-identity.json --origin laptop --os linux
+  --identity ~/.config/kimo-token/device-identity.json --origin laptop --os linux
 ```
 
 The suggested default port is `47821`; a server must explicitly opt in before binding a non-loopback LAN/VPN address. The existing `export/import` file path keeps its old semantics and is not selected automatically by enabling this channel. UDP, QUIC and SSH are not transports for this path. A successful upload never deletes the local index; `409 RECONCILE_REQUIRED` requires reconciliation and must not trigger automatic outbox cleanup.
@@ -194,10 +187,10 @@ Verification boundary: `cargo test -p usage-device-sync` covers loopback TLS1.3,
 
 ## 5. Budgets
 
-For tools whose vendor publishes no limit (Cline, ZCode, …), set your own caps — tokenme measures them against its own cost math and raises a quota bar:
+For tools whose vendor publishes no limit (Cline, ZCode, …), set your own caps — kimo-token measures them against its own cost math and raises a quota bar:
 
 ```bash
-tokenme budget set zcode --daily 5 --monthly 50
+kimo-token budget set zcode --daily 5 --monthly 50
 ```
 
 ## 6. Supported tools & data sources
@@ -228,23 +221,23 @@ Cloud-only tools without local per-request logs (Cursor, VS Code Copilot) are no
 - Only per-request token counts, model names and project paths are indexed — never your code or prompts.
 - Scanning is read-only end to end: probes read credentials, and the only ones that hand a refreshed one back are the three logins §3.6 names, each into that tool's own store. No telemetry, no third-party proxies.
 - Network calls include live quota probes against your own vendor accounts, the models.dev price list, mail/release links you click, and any device-sync endpoint you explicitly configure.
-- Cross-machine sync (§4) moves only that same metadata — bundles carry no code, prompts or credentials. The legacy file-bundle path uses a channel you own (ssh/scp, Syncthing, or a mounted disk); strict device sync opens only the explicitly configured, approved primary over pinned HTTPS/TCP/TLS 1.3. tokenme uses no cloud relay, stores no third-party sync credentials, and validates every bundle or strict package before merging.
+- Cross-machine sync (§4) moves only that same metadata — bundles carry no code, prompts or credentials. The legacy file-bundle path uses a channel you own (ssh/scp, Syncthing, or a mounted disk); strict device sync opens only the explicitly configured, approved primary over pinned HTTPS/TCP/TLS 1.3. kimo-token uses no cloud relay, stores no third-party sync credentials, and validates every bundle or strict package before merging.
 
 ## 8. Troubleshooting
 
 | Symptom | Fix |
 | :--- | :--- |
-| `no supported AI tool logs found` | Run one of your tools once, then `tokenme detect` |
-| Costs look wrong | `tokenme pricing explain <model>` — check which listing won; override with `--pricing-override` |
-| Numbers seem stale | `tokenme index --status`; another tokenme process may hold the ingest lease — `tokenme index --force` |
+| `no supported AI tool logs found` | Run one of your tools once, then `kimo-token detect` |
+| Costs look wrong | `kimo-token pricing explain <model>` — check which listing won; override with `--pricing-override` |
+| Numbers seem stale | `kimo-token index --status`; another kimo-token process may hold the ingest lease — `kimo-token index --force` |
 | A quota row stopped moving | Advanced → Check quotas automatically (the master gate) or Quota checks by tool turned that probe off: with a gate closed the row is the cache's last answer; with the master gate off the whole section reads **Polling stopped · data as of …**. Open the switch again — the next pass within 60 s or the refresh button restores it |
 | The bottom bar's left corner reads **Updates stopped** | The engine is not publishing, so the figures are a snapshot of the previous pass — the swap happens by itself after five cadences without a publish, and it carries the time. The panel restarts the loop itself (backoff; the reason is in `panel.log`); press refresh to force a pass, and read `panel.log` if the badge outlives a minute. Not to be confused with the **From the last scan** chip: that one means the engine is alive and still scanning, showing the report the previous run published |
-| Index corrupted | `tokenme index --rebuild` (quarantines the old file automatically) |
-| Panel shows no data | Check `tokenme detect` finds sources; the panel reads the same index |
+| Index corrupted | `kimo-token index --rebuild` (quarantines the old file automatically) |
+| Panel shows no data | Check `kimo-token detect` finds sources; the panel reads the same index |
 | A blank card for the first seconds after launch | Usually not: the first frame is the last report read from `report.json`, so figures are there the moment the page can paint. When you do see the card — a fresh install, or nothing restorable — what you are looking at is the window's **native backing** (white under Light, dark under Dark), not a page that failed to paint; `panel.log` says which phase cost the time |
 | The panel opened in a screen corner, not under the menu bar | That open had no tray rectangle *and* the session exposed no monitors — a relaunch while the screen is locked or the display is asleep (`panel.log` says `no monitor to anchor to`). The next open anchors to the menu bar normally |
-| Quota banners never arrive | Allow TokenMe to notify first (macOS System Settings → Notifications → TokenMe; Windows Settings → System → Notifications) — a denial leaves one `notify: [<window>] blocked` line in the log. Prove the plumbing by relaunching with `TOKENME_TEST_NOTIFY=1`: `panel.log` answers `notify test: posted` / `blocked` / `permission was just requested` |
-| Sync badge is old or absent | On the collector: `systemctl --user list-timers tokenme-export.timer` (is the timer alive?) and `tokenme export` by hand; on the display machine the bundles must land in `~/tokenme-sync` — `tokenme import <file> --dry-run` shows what a merge would do |
+| Quota banners never arrive | Allow kimo-token to notify first (macOS System Settings → Notifications → kimo-token; Windows Settings → System → Notifications) — a denial leaves one `notify: [<window>] blocked` line in the log. Prove the plumbing by relaunching with `KIMO_TOKEN_TEST_NOTIFY=1`: `panel.log` answers `notify test: posted` / `blocked` / `permission was just requested` |
+| Sync badge is old or absent | On the collector: `systemctl --user list-timers kimo-token-export.timer` (is the timer alive?) and `kimo-token export` by hand; on the display machine the bundles must land in `~/kimo-token-sync` — `kimo-token import <file> --dry-run` shows what a merge would do |
 | A bundle was rejected | The import message names the reason (sha256 mismatch = corrupted or truncated in transit; format/schema mismatch = version skew between the machines). The file is kept, nothing was merged — fix the transport or update the older side, then it retries by itself |
 
 

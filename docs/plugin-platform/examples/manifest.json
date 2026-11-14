@@ -1,6 +1,6 @@
 {
   "manifestVersion": "1.0.0-draft.1",
-  "id": "org.example.tokenme.example-ide",
+  "id": "org.example.kimo-token.example-ide",
   "version": "0.1.0",
   "publisher": {
     "id": "org.example",
@@ -281,11 +281,11 @@
     { "id": "checkin-button", "kind": "action", "tool": "example_ide", "action": "checkin-now" }
   ],
   "events": [
-    { "id": "usage.accepted", "schema": "tokenme.usage-accepted/v1" },
-    { "id": "quota.changed", "schema": "tokenme.quota-changed/v1" },
-    { "id": "checkin.completed", "schema": "tokenme.checkin-result/v1" },
-    { "id": "tokens.estimated", "schema": "tokenme.estimate-result/v1" },
-    { "id": "value.estimated", "schema": "tokenme.estimate-result/v1" }
+    { "id": "usage.accepted", "schema": "kimo-token.usage-accepted/v1" },
+    { "id": "quota.changed", "schema": "kimo-token.quota-changed/v1" },
+    { "id": "checkin.completed", "schema": "kimo-token.checkin-result/v1" },
+    { "id": "tokens.estimated", "schema": "kimo-token.estimate-result/v1" },
+    { "id": "value.estimated", "schema": "kimo-token.estimate-result/v1" }
   ],
   "diagnostics": {
     "events": [

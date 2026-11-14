@@ -3,7 +3,7 @@ name = "usage-adapter-qoder"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "tokenme source adapter: qoder"
+description = "kimo-token source adapter: qoder"
 
 [dependencies]
 usage-core.workspace = true

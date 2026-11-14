@@ -18,7 +18,7 @@ use usage_core::{
 
 pub const TOOL_ID: &str = "codex";
 
-/// The replay audit surface: `tokenme codex-doctor` and the scan log read this.
+/// The replay audit surface: `kimo-token codex-doctor` and the scan log read this.
 pub use doctor::sessions as replay;
 pub use ttft::{read_ttft, CodexTtftCursor, CodexTtftRead, CodexTtftSample};
 

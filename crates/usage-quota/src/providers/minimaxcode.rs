@@ -93,7 +93,7 @@ const BASE_CN: &str = "https://www.minimaxi.com";
 /// `PUBLIC_GATEWAY_ORIGINS[…]["prod"]` in `packages/tui/src/runtime/public-gateway.ts`.
 const AGENT_EN: &str = "https://agent.minimax.io";
 const AGENT_CN: &str = "https://agent.minimaxi.com";
-const USER_AGENT: &str = concat!("tokenme/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("kimo-token/", env!("CARGO_PKG_VERSION"));
 
 /// The vendor's OAuth client values (`@mavis/oauth-core` contracts), sent verbatim
 /// on the refresh exchange.
@@ -610,7 +610,7 @@ fn write_private(path: &Path, value: &Value) -> Option<()> {
     use std::io::Write;
     let dir = path.parent()?;
     let text = format!("{}\n", serde_json::to_string_pretty(value).ok()?);
-    let tmp = dir.join(format!(".tokenme-{}.tmp", std::process::id()));
+    let tmp = dir.join(format!(".kimo-token-{}.tmp", std::process::id()));
     let mut file = std::fs::File::create(&tmp).ok()?;
     file.write_all(text.as_bytes()).ok()?;
     file.sync_all().ok()?;
@@ -829,7 +829,7 @@ fn checkin_state_path() -> Option<PathBuf> {
             return Some(PathBuf::from(file));
         }
     }
-    dirs::config_dir().map(|d| d.join("tokenme").join("quota").join("minimax_checkin.json"))
+    usage_core::paths::config_dir().map(|d| d.join("quota").join("minimax_checkin.json"))
 }
 
 fn load_checkin_state(path: &Path) -> CheckinState {
@@ -1532,7 +1532,7 @@ mod tests {
         assert!(raw.contains("\n  \"schemaVersion\""), "pretty-printed like FileStore writes it");
         assert!(!std::fs::read_dir(file.parent().unwrap())
             .unwrap()
-            .any(|e| e.unwrap().file_name().to_string_lossy().contains("tokenme")));
+            .any(|e| e.unwrap().file_name().to_string_lossy().contains("kimo-token")));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

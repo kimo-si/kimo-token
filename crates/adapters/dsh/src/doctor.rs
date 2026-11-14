@@ -6,7 +6,7 @@
 //! plus the structural facts that explain honest drift: a projection whose
 //! `inheritedEventCount` is non-zero covers only its v4-era events, and
 //! `tokenUsage` is the main thread's ledger, so subagent spend (a separate
-//! row) is not in it. `tokenme dsh-doctor` prints these next to the index's
+//! row) is not in it. `kimo-token dsh-doctor` prints these next to the index's
 //! events; any line that disagrees names its own reason.
 
 use std::path::PathBuf;

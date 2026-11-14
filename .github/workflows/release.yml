@@ -47,10 +47,10 @@ jobs:
         run: |
           # tauri bundle resources (untracked build inputs — see tauri.conf.json);
           # built by the cli-linux job, consumed here so a mirrored checkout builds
-          mkdir -p apps/tokenme-bar/src-tauri/resources/collector
+          mkdir -p apps/kimo-token-bar/src-tauri/resources/collector
           for a in x86_64 aarch64; do
-            cp "collector/tokenme-$a" "apps/tokenme-bar/src-tauri/resources/collector/tokenme-$a"
-            chmod +x "apps/tokenme-bar/src-tauri/resources/collector/tokenme-$a"
+            cp "collector/kimo-token-$a" "apps/kimo-token-bar/src-tauri/resources/collector/kimo-token-$a"
+            chmod +x "apps/kimo-token-bar/src-tauri/resources/collector/kimo-token-$a"
           done
       - uses: dtolnay/rust-toolchain@stable
       - uses: pnpm/action-setup@v4
@@ -60,7 +60,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: apps/tokenme-bar/pnpm-lock.yaml
+          cache-dependency-path: apps/kimo-token-bar/pnpm-lock.yaml
       - name: Build
         id: build
         # pipefail or the tee swallows the script's exit code: a mid-build
@@ -80,10 +80,10 @@ jobs:
           retention-days: 7
       - name: Stage artifacts
         run: |
-          B=apps/tokenme-bar/src-tauri/target/release/bundle
+          B=apps/kimo-token-bar/src-tauri/target/release/bundle
           mkdir -p dist
-          ditto -c -k --keepParent "$B/macos/TokenMe.app" dist/tokenme-macos-arm64.app.zip
-          cp "$B"/dmg/tokenme_*.dmg dist/
+          ditto -c -k --keepParent "$B/macos/kimo-token.app" dist/kimo-token-macos-arm64.app.zip
+          cp "$B"/dmg/kimo-token_*.dmg dist/
       - uses: actions/upload-artifact@v4
         with:
           name: panel
@@ -105,10 +105,10 @@ jobs:
         shell: bash
         run: |
           # tauri bundle resources (untracked build inputs — see tauri.conf.json)
-          mkdir -p apps/tokenme-bar/src-tauri/resources/collector
+          mkdir -p apps/kimo-token-bar/src-tauri/resources/collector
           for a in x86_64 aarch64; do
-            cp "collector/tokenme-$a" "apps/tokenme-bar/src-tauri/resources/collector/tokenme-$a"
-            chmod +x "apps/tokenme-bar/src-tauri/resources/collector/tokenme-$a"
+            cp "collector/kimo-token-$a" "apps/kimo-token-bar/src-tauri/resources/collector/kimo-token-$a"
+            chmod +x "apps/kimo-token-bar/src-tauri/resources/collector/kimo-token-$a"
           done
       # universal-apple-darwin is not a rust target: cargo compiles BOTH sides
       # and tauri lipos them, so both toolchains must be installed up front —
@@ -123,14 +123,14 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: apps/tokenme-bar/pnpm-lock.yaml
+          cache-dependency-path: apps/kimo-token-bar/pnpm-lock.yaml
       - name: Install frontend deps
-        # The frontend lives in apps/tokenme-bar; from the repo root pnpm
+        # The frontend lives in apps/kimo-token-bar; from the repo root pnpm
         # finds no package.json and dies before the build even starts.
-        run: pnpm --dir apps/tokenme-bar install --frozen-lockfile --prefer-offline
+        run: pnpm --dir apps/kimo-token-bar install --frozen-lockfile --prefer-offline
       - name: Build
         id: build
-        run: set -o pipefail; pnpm --dir apps/tokenme-bar tauri build --target universal-apple-darwin 2>&1 | tee build-universal.log
+        run: set -o pipefail; pnpm --dir apps/kimo-token-bar tauri build --target universal-apple-darwin 2>&1 | tee build-universal.log
       - name: Surface build failure
         if: failure()
         # The check annotations are the only anonymous window into a failed
@@ -148,18 +148,18 @@ jobs:
           retention-days: 7
       - name: Sign and stage
         run: |
-          APP=apps/tokenme-bar/src-tauri/target/universal-apple-darwin/release/bundle/macos/TokenMe.app
+          APP=apps/kimo-token-bar/src-tauri/target/universal-apple-darwin/release/bundle/macos/kimo-token.app
           codesign --force --sign - "$APP"
           codesign -v "$APP"
           mkdir -p dist
           STAGE=$(mktemp -d)
           cp -R "$APP" "$STAGE/"
           ln -s /Applications "$STAGE/Applications"
-          D=apps/tokenme-bar/src-tauri/target/universal-apple-darwin/release/bundle/dmg
+          D=apps/kimo-token-bar/src-tauri/target/universal-apple-darwin/release/bundle/dmg
           mkdir -p "$D"
-          hdiutil create -quiet -volname tokenme -srcfolder "$STAGE" -ov -format UDZO "$D/tokenme_universal.dmg"
+          hdiutil create -quiet -volname kimo-token -srcfolder "$STAGE" -ov -format UDZO "$D/kimo-token_universal.dmg"
           rm -rf "$STAGE"
-          cp "$D"/tokenme_universal.dmg dist/
+          cp "$D"/kimo-token_universal.dmg dist/
       - uses: actions/upload-artifact@v4
         with:
           name: panel-universal
@@ -192,13 +192,13 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           mkdir dist
-          tar -czf "dist/tokenme-cli-${{ matrix.target }}.tar.gz" -C "target/${{ matrix.target }}/release" tokenme
+          tar -czf "dist/kimo-token-cli-${{ matrix.target }}.tar.gz" -C "target/${{ matrix.target }}/release" kimo-token
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path "target/${{ matrix.target }}/release/tokenme.exe" -DestinationPath "dist/tokenme-cli-${{ matrix.target }}.zip"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/kimo-token.exe" -DestinationPath "dist/kimo-token-cli-${{ matrix.target }}.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: cli-${{ matrix.target }}
@@ -235,16 +235,16 @@ jobs:
       - name: Package
         run: |
           V=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          PKG=tokenme-cli-$V-${{ matrix.arch }}-linux-musl
+          PKG=kimo-token-cli-$V-${{ matrix.arch }}-linux-musl
           mkdir -p "dist/$PKG"
-          cp "target/${{ matrix.arch }}-unknown-linux-musl/release/tokenme" "dist/$PKG/tokenme"
+          cp "target/${{ matrix.arch }}-unknown-linux-musl/release/kimo-token" "dist/$PKG/kimo-token"
           cp scripts/install-linux.sh "dist/$PKG/install-linux.sh"
-          chmod +x "dist/$PKG/tokenme" "dist/$PKG/install-linux.sh"
+          chmod +x "dist/$PKG/kimo-token" "dist/$PKG/install-linux.sh"
           tar -C dist -czf "dist/$PKG.tar.gz" "$PKG"
           rm -rf "dist/$PKG"
           # raw binary rides the artifact too: the panel packaging jobs stage
           # it as tauri bundle resources (a mirrored checkout has none)
-          cp "target/${{ matrix.arch }}-unknown-linux-musl/release/tokenme" "dist/tokenme-${{ matrix.arch }}"
+          cp "target/${{ matrix.arch }}-unknown-linux-musl/release/kimo-token" "dist/kimo-token-${{ matrix.arch }}"
       - uses: actions/upload-artifact@v4
         with:
           name: cli-linux-${{ matrix.arch }}
@@ -273,9 +273,9 @@ jobs:
       - name: Stage collectors
         shell: bash
         run: |
-          mkdir -p apps/tokenme-bar/src-tauri/resources/collector
+          mkdir -p apps/kimo-token-bar/src-tauri/resources/collector
           for a in x86_64 aarch64; do
-            install -m 0755 "collector/tokenme-$a" "apps/tokenme-bar/src-tauri/resources/collector/tokenme-$a"
+            install -m 0755 "collector/kimo-token-$a" "apps/kimo-token-bar/src-tauri/resources/collector/kimo-token-$a"
           done
       - name: Install Linux build dependencies
         run: |
@@ -291,7 +291,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: apps/tokenme-bar/pnpm-lock.yaml
+          cache-dependency-path: apps/kimo-token-bar/pnpm-lock.yaml
       - name: Build and test Linux desktop
         run: |
           set -o pipefail
@@ -314,7 +314,7 @@ jobs:
           retention-days: 7
       - name: Stage Debian package
         run: |
-          packages=(apps/tokenme-bar/src-tauri/target/release/bundle/deb/*.deb)
+          packages=(apps/kimo-token-bar/src-tauri/target/release/bundle/deb/*.deb)
           if [ "${#packages[@]}" -ne 1 ] || [ ! -f "${packages[0]}" ]; then
             echo "::error::Expected exactly one Debian package"
             exit 1
@@ -322,7 +322,7 @@ jobs:
           test "$(dpkg-deb -f "${packages[0]}" Architecture)" = "${{ matrix.arch }}"
           dpkg-deb --info "${packages[0]}"
           mkdir -p dist
-          cp "${packages[0]}" "dist/tokenme-linux-${{ matrix.arch }}.deb"
+          cp "${packages[0]}" "dist/kimo-token-linux-${{ matrix.arch }}.deb"
       - uses: actions/upload-artifact@v4
         with:
           name: panel-linux-${{ matrix.arch }}
@@ -346,10 +346,10 @@ jobs:
         shell: bash
         run: |
           # tauri bundle resources (untracked build inputs — see tauri.conf.json)
-          mkdir -p apps/tokenme-bar/src-tauri/resources/collector
+          mkdir -p apps/kimo-token-bar/src-tauri/resources/collector
           for a in x86_64 aarch64; do
-            cp "collector/tokenme-$a" "apps/tokenme-bar/src-tauri/resources/collector/tokenme-$a"
-            chmod +x "apps/tokenme-bar/src-tauri/resources/collector/tokenme-$a"
+            cp "collector/kimo-token-$a" "apps/kimo-token-bar/src-tauri/resources/collector/kimo-token-$a"
+            chmod +x "apps/kimo-token-bar/src-tauri/resources/collector/kimo-token-$a"
           done
       - uses: dtolnay/rust-toolchain@stable
       - uses: pnpm/action-setup@v4
@@ -359,22 +359,22 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: apps/tokenme-bar/pnpm-lock.yaml
+          cache-dependency-path: apps/kimo-token-bar/pnpm-lock.yaml
       - name: Install frontend deps
-        run: pnpm --dir apps/tokenme-bar install --frozen-lockfile
+        run: pnpm --dir apps/kimo-token-bar install --frozen-lockfile
       - name: Build
         id: build
         shell: pwsh
         run: |
-          cd apps/tokenme-bar
+          cd apps/kimo-token-bar
           pnpm tauri build --bundles nsis 2>&1 | Tee-Object -FilePath ..\..\build-win-panel.log
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Stage installer
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          $exe = Get-ChildItem "apps/tokenme-bar/src-tauri/target/release/bundle/nsis/*-setup.exe" | Select-Object -First 1
-          Copy-Item $exe.FullName "dist/tokenme-windows-x64-setup.exe"
+          $exe = Get-ChildItem "apps/kimo-token-bar/src-tauri/target/release/bundle/nsis/*-setup.exe" | Select-Object -First 1
+          Copy-Item $exe.FullName "dist/kimo-token-windows-x64-setup.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: panel-windows
@@ -392,7 +392,7 @@ jobs:
       - name: Hash
         run: |
           cd dist
-          sha256sum tokenme_*.dmg tokenme-macos-*.app.zip tokenme-windows-*.exe tokenme-linux-*.deb tokenme-cli-* > ../sha256.txt
+          sha256sum kimo-token_*.dmg kimo-token-macos-*.app.zip kimo-token-windows-*.exe kimo-token-linux-*.deb kimo-token-cli-* > ../sha256.txt
       - uses: softprops/action-gh-release@v2
         with:
           # The body is the notes job's artifact, merged into dist/ by
@@ -401,29 +401,28 @@ jobs:
           # "Full Changelog" line every earlier page shipped.
           body_path: dist/notes.md
           files: |
-            dist/tokenme_*.dmg
-            dist/tokenme-macos-*.app.zip
-            dist/tokenme-windows-*.exe
-            dist/tokenme-linux-*.deb
-            dist/tokenme-cli-*
+            dist/kimo-token_*.dmg
+            dist/kimo-token-macos-*.app.zip
+            dist/kimo-token-windows-*.exe
+            dist/kimo-token-linux-*.deb
+            dist/kimo-token-cli-*
             sha256.txt
             latest.json
 
   homebrew:
-    # Bumps Bencibr/homebrew-tokenme (cask + formula) to the freshly published
-    # release: copies packaging/homebrew over and rewrites version and the
-    # sha256s from the release's own sha256.txt. The tap grants this workflow
-    # write access through a read-write deploy key stored as TAP_DEPLOY_KEY —
-    # scoped to that one repository, nothing else.
+    # 可选：为 HOMEBREW_TAP_REPOSITORY 指定的 tap 更新配方和发布校验值。
+    # 同时配置该仓库的 TAP_DEPLOY_KEY 后才启用；新仓库默认跳过。
     needs: [release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Guard
         id: guard
-        env: { TAP_DEPLOY_KEY: "${{ secrets.TAP_DEPLOY_KEY }}" }
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+          TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPOSITORY }}
         run: |
-          if [ -z "$TAP_DEPLOY_KEY" ]; then
+          if [ -z "$TAP_DEPLOY_KEY" ] || [ -z "$TAP_REPOSITORY" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -432,6 +431,7 @@ jobs:
         if: steps.guard.outputs.skip == 'false'
         env:
           TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+          TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPOSITORY }}
           TAG: ${{ github.ref_name }}
         run: |
           mkdir -p ~/.ssh
@@ -439,12 +439,14 @@ jobs:
           chmod 600 ~/.ssh/tap_deploy_key
           ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_deploy_key -o IdentitiesOnly=yes"
-          git clone --depth 1 git@github.com:Bencibr/homebrew-tokenme.git tap
-          curl -sL "https://github.com/Bencibr/tokenme/releases/download/${TAG}/sha256.txt" -o sha256.txt
+          git clone --depth 1 "git@github.com:${TAP_REPOSITORY}.git" tap
+          curl --fail --silent --show-error --location "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/sha256.txt" -o sha256.txt
+          install -D packaging/homebrew/Casks/kimo-token.rb tap/Casks/kimo-token.rb
+          install -D packaging/homebrew/Formula/kimo-token-cli.rb tap/Formula/kimo-token-cli.rb
           python3 packaging/homebrew/bump.py "${TAG#v}" sha256.txt tap
           cd tap
           git config user.email "agent@users.noreply.github.com"
-          git config user.name "tokenme-release-bot"
+          git config user.name "kimo-token-release-bot"
           git add -A
-          git commit -m "tokenme ${GITHUB_REF_NAME}"
+          git commit -m "kimo-token ${GITHUB_REF_NAME}"
           git push

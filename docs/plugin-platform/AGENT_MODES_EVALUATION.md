@@ -25,7 +25,7 @@
 
 ### 2.1 客户端和标准协议
 
-Claude Code 官方文档提供本地 stdio 及 HTTP MCP 接入。因此 TokenMe 可以用普通工具列表暴露任务操作，无需将任务总结伪装成模型 API。首版采用已存在的 tools/list、tools/call 生命周期，把长任务查询做成普通有界工具调用；不依赖客户端尚未验证的异步 task 扩展。来源：[Claude Code MCP](https://code.claude.com/docs/en/mcp)。
+Claude Code 官方文档提供本地 stdio 及 HTTP MCP 接入。因此 kimo-token 可以用普通工具列表暴露任务操作，无需将任务总结伪装成模型 API。首版采用已存在的 tools/list、tools/call 生命周期，把长任务查询做成普通有界工具调用；不依赖客户端尚未验证的异步 task 扩展。来源：[Claude Code MCP](https://code.claude.com/docs/en/mcp)。
 
 ACP 官方协议定义独立会话和 prompt turn；取消必须按真实终态处理。它是候选上游适配协议，**不是**“任何带ACP名字的本机服务都能直接信任/完全兼容”。来源：[会话](https://agentclientprotocol.com/protocol/v1/session-setup)、[Prompt turn](https://agentclientprotocol.com/protocol/v1/prompt-turn)。
 
@@ -47,7 +47,7 @@ ACP 官方协议定义独立会话和 prompt turn；取消必须按真实终态�
 
 审阅 jie023/workbuddy-acp-bridge 的修订 e2327499273efa093ebdcbffde9a4c8833e26e76：它从 sessions 元数据发现本机 Remote Gateway，经 /api/v1/acp/connect 取得连接身份，再使用 HTTP/SSE 驱动 initialize、session/new/load、session/prompt 和 session/cancel；向客户端暴露 MCP 工具。来源：[发现代码](https://github.com/jie023/workbuddy-acp-bridge/blob/e2327499273efa093ebdcbffde9a4c8833e26e76/src/workbuddy_acp_bridge/gateway.py)、[ACP客户端](https://github.com/jie023/workbuddy-acp-bridge/blob/e2327499273efa093ebdcbffde9a4c8833e26e76/src/workbuddy_acp_bridge/acp_client.py)。没有安装/运行该代码。
 
-该项目默认全局共用会话，并在任务前 /clear；权限处理也不能证明拒绝所有已经预授权的动作。TokenMe 只取其机器接口作为研究线索，不照搬共享会话、提示词“只读”或调用方自行传 allow_once 的权限模型。必须按自己的安装信任、consumer/工作区/账号隔离与审批合同重做。
+该项目默认全局共用会话，并在任务前 /clear；权限处理也不能证明拒绝所有已经预授权的动作。kimo-token 只取其机器接口作为研究线索，不照搬共享会话、提示词“只读”或调用方自行传 allow_once 的权限模型。必须按自己的安装信任、consumer/工作区/账号隔离与审批合同重做。
 
 ### 2.4 官方开放接口的范围
 
@@ -57,11 +57,11 @@ ACP 官方协议定义独立会话和 prompt turn；取消必须按真实终态�
 
 ## 3. 两种模式的认证与运行边界
 
-A 使用用户明确选择的本地 WorkBuddy 账号来源，宿主识别版本并通过不透明句柄注入上游；优先使用 WorkBuddy 自己维护登录的受控通道。读取到凭据不证明模型调用可用；加密存储/过期/第一方并发刷新都须遵守原认证合同，不能改写正在使用的桌面登录来“修好代理”。客户端只持有 TokenMe consumer key。
+A 使用用户明确选择的本地 WorkBuddy 账号来源，宿主识别版本并通过不透明句柄注入上游；优先使用 WorkBuddy 自己维护登录的受控通道。读取到凭据不证明模型调用可用；加密存储/过期/第一方并发刷新都须遵守原认证合同，不能改写正在使用的桌面登录来“修好代理”。客户端只持有 kimo-token consumer key。
 
 “所有请求经网关”在此指配置到该入口的模型推理。客户端的更新/登录/遥测等网络访问不是模型API合同；如需强制全部网络出口，另用网络策略，不承诺一个Base URL配置可覆盖全部流量。
 
-B 优先让 WorkBuddy 自己使用其登录、连接器与执行环境。TokenMe持有当前本机ACP连接的短期身份，不把该连接token/WorkBuddy原始登录交给Claude Code。模型认证与任务连接认证分别管理，不能用 quota 可读推导 task 可执行。
+B 优先让 WorkBuddy 自己使用其登录、连接器与执行环境。kimo-token持有当前本机ACP连接的短期身份，不把该连接token/WorkBuddy原始登录交给Claude Code。模型认证与任务连接认证分别管理，不能用 quota 可读推导 task 可执行。
 
 两种模式共用账号身份、状态/日志、设置、通知、预算和用量归属；但健康分别标注 model_backend_ready 与 agent_delegation_ready。功能支持只有在对应扩展 profile、宿主服务、插件和真实验收都存在时才显示可启用。
 
@@ -78,7 +78,7 @@ B 优先让 WorkBuddy 自己使用其登录、连接器与执行环境。TokenMe
 | agent_cancel | job_ref | cancel_requested或已经确认的终态；发送通知不等于已取消 |
 | agent_continue | job_ref、task_text、idempotency_key | 仅在已终结或明确等待输入的同归属会话追加新一轮；新轮有独立request/usage |
 
-这些是TokenMe拟议工具名和数据合同，不是当前已注册命令。job_ref 不接受外部上游session ID替代。客户端不获得自动批准权限的参数，审批留在已授权宿主控制面；后续需要其他控制面时单独授予对应能力。
+这些是kimo-token拟议工具名和数据合同，不是当前已注册命令。job_ref 不接受外部上游session ID替代。客户端不获得自动批准权限的参数，审批留在已授权宿主控制面；后续需要其他控制面时单独授予对应能力。
 
 MCP断开只关闭该控制连接，不自动取消已确认accepted的委派job，允许调用方用同一consumer/job_ref再查询；显式agent_cancel或用户停用才触发取消。与A中一次模型流断开即取消的默认值分开。任务仍有30分钟硬deadline，宿主退出则取消/核对，不借此变成未受监督的后台服务。
 
@@ -97,7 +97,7 @@ MCP断开只关闭该控制连接，不自动取消已确认accepted的委派job
 - A的模型调用与B的委派执行用不同scope/开关/effect：开启模型入口不能顺带允许Agent执行。
 - 调用链由宿主签发parent/root Ref，记录“哪个客户端→哪个执行Agent→哪些模型消费”；同一底层消费只入公共账一次，按客户端/执行者查看是维度筛选，不重复加总。
 - 同时保留Claude Code自身规划与WorkBuddy任务用量，未知关联不伪造归属。B不保证减少费用/延迟，A也不保证上游所有特性等价。
-- 拒绝已知路由依赖环，调用深度上限4、子任务数量/预算共享根限制；不允许WorkBuddy委派回同一上游形成无限循环。外部Agent脱离TokenMe的调用链不能保证被完整追踪，仍靠宿主并发/预算上限兜底。
+- 拒绝已知路由依赖环，调用深度上限4、子任务数量/预算共享根限制；不允许WorkBuddy委派回同一上游形成无限循环。外部Agent脱离kimo-token的调用链不能保证被完整追踪，仍靠宿主并发/预算上限兜底。
 - 新的端点、工具、输入和输出均需G01闭合schema；A/B独立调度配额，不能以任务排队饿死配额/用量采集。
 
 G05另建attribution关系，至少绑定标准fact_ref、billing_tool/account、consumer_tool_ref、provider_ref、job/request/root Ref及宿主验证的关联证据。标准消费账归属实际计费的WorkBuddy账号；Claude Code是调用方维度。不能仅凭同时间/Token量跨tool合并，也不能把不同tool下同一消费各算一次。无法建立可靠对应时保留独立观测并标overlap_unknown，不叠加公共账；已有历史不凭显示名重写归属。
@@ -111,7 +111,7 @@ F13内新增独立B轨道，不让A验收代替它：
 | WB-D0 本机协议资格 | 找到新鲜Host Runtime、校验OS进程/端口/所属版本；读取安装代码的具体路由和认证 | 完成连接/initialize/能力发现并清理测试连接；不创建/接管用户既有任务；当前待运行 |
 | WB-D1 隔离与最小任务 | 受控测试workspace/独立session，固定一条无外部写入的有预算任务；进度/终态/取消 | 真实任务返回和取消证据；两consumer不共享会话；当前未执行 |
 | WB-D2 权限与恢复 | 工具审批/预授权检查、任务幂等、断线/重启/升级、结果/产物读取 | 不能伪造审批、不能越界取文件、dispatch未知不重复执行；当前未执行 |
-| WB-D3 最终插件链路 | TokenMe MCP协议插件＋WorkBuddy agent_task插件，Claude Code真实tools/list→submit/status/result/cancel | 未知plugin ID动态注册、统一设置/诊断/用量对账，实际安装包逐平台验收 |
+| WB-D3 最终插件链路 | kimo-token MCP协议插件＋WorkBuddy agent_task插件，Claude Code真实tools/list→submit/status/result/cancel | 未知plugin ID动态注册、统一设置/诊断/用量对账，实际安装包逐平台验收 |
 
 WB-D0的发现/协议证据可先进行；其live探路只在证实端点所属后连接。当前记录文件全为陈旧不能随意试端口、端口可能已被其他进程复用。若WorkBuddy尚未发布新鲜服务登记，健康显示“本机Agent接口未就绪”，后续正常启动/启用Runtime后重试；不能将其重写为“未登录”或“所有模式不可行”。
 
@@ -119,4 +119,4 @@ WB-D0的发现/协议证据可先进行；其live探路只在证实端点所属�
 
 ## 6. 当前完成与未完成
 
-已完成模式比较、安装代码/协议研究、两条独立注册/授权路径、委派工具合同与分阶段验收票。尚未完成本机实时ACP握手、真实委派任务、最终TokenMe插件和Claude Code端到端验收。核心文档继续可实施；新增A/B扩展须分别冻结G01并通过相应轨道，不能将全部设计或产品标为完成。
+已完成模式比较、安装代码/协议研究、两条独立注册/授权路径、委派工具合同与分阶段验收票。尚未完成本机实时ACP握手、真实委派任务、最终kimo-token插件和Claude Code端到端验收。核心文档继续可实施；新增A/B扩展须分别冻结G01并通过相应轨道，不能将全部设计或产品标为完成。

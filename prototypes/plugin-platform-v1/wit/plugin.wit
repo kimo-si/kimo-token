@@ -1,4 +1,4 @@
-package tokenme:plugin@0.1.0;
+package kimo-token:plugin@0.1.0;
 
 interface host {
     record http-response {

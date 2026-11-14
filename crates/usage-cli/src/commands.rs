@@ -96,7 +96,7 @@ fn diagnostics_bridge_stdio(db_path: &std::path::Path, primary_id: &str, config_
     if !secondary.identity_path.exists() {
         return Err(format!("diagnostics debugger identity is missing: {}", secondary.identity_path.display()));
     }
-    let identity = DeviceIdentity::load_or_create(&secondary.identity_path, secondary.origin.clone(), "tokenme diagnostics bridge")
+    let identity = DeviceIdentity::load_or_create(&secondary.identity_path, secondary.origin.clone(), "kimo-token diagnostics bridge")
         .map_err(|error| format!("cannot load diagnostics debugger identity: {error}"))?;
     if identity.device_id != config.grant.debugger_device_id || identity.origin != config.grant.debugger_origin {
         return Err("diagnostics identity file does not match the grant".into());
@@ -121,14 +121,14 @@ fn diagnostics_bridge_stdio(db_path: &std::path::Path, primary_id: &str, config_
         if read == 0 { return Ok(()); }
         if line.len() > usage_device_sync::MAX_DIAGNOSTICS_BODY_BYTES {
             let id = serde_json::from_str::<serde_json::Value>(line.trim_end()).ok().and_then(|value| json_rpc_id(&value));
-            eprintln!("tokenme diagnostics: request exceeds the configured size limit");
+            eprintln!("kimo-token diagnostics: request exceeds the configured size limit");
             write_diagnostics_bridge_error(&mut writer, id, -32600, "limit_exceeded", "diagnostics request exceeds the configured size limit")?;
             continue;
         }
         let value: serde_json::Value = match serde_json::from_str(line.trim_end()) {
             Ok(value) => value,
             Err(_) => {
-                eprintln!("tokenme diagnostics: invalid JSON-RPC request");
+                eprintln!("kimo-token diagnostics: invalid JSON-RPC request");
                 write_diagnostics_bridge_error(&mut writer, None, -32700, "parse_error", "invalid JSON-RPC request")?;
                 continue;
             }
@@ -139,7 +139,7 @@ fn diagnostics_bridge_stdio(db_path: &std::path::Path, primary_id: &str, config_
             Ok(request) => request,
             Err(error) => {
                 let message = bounded_diagnostics_error(&error);
-                eprintln!("tokenme diagnostics: {message}");
+                eprintln!("kimo-token diagnostics: {message}");
                 write_diagnostics_bridge_error(&mut writer, id, -32600, "invalid_request", &message)?;
                 continue;
             }
@@ -157,13 +157,13 @@ fn diagnostics_bridge_stdio(db_path: &std::path::Path, primary_id: &str, config_
             }
             Ok(None) => {
                 if request_id.is_some() {
-                    eprintln!("tokenme diagnostics: remote diagnostics returned no response for a request");
+                    eprintln!("kimo-token diagnostics: remote diagnostics returned no response for a request");
                     write_diagnostics_bridge_error(&mut writer, request_id, -32099, "transport_error", "remote diagnostics returned no response")?;
                 }
             }
             Err(error) => {
                 let detail = bounded_diagnostics_error(&error.to_string());
-                eprintln!("tokenme diagnostics: {detail}");
+                eprintln!("kimo-token diagnostics: {detail}");
                 if request_id.is_some() {
                     write_diagnostics_bridge_error(&mut writer, request_id, -32099, "transport_error", "remote diagnostics transport failed")?;
                 }
@@ -219,7 +219,7 @@ fn build_diagnostics_bridge_request(
         serde_json::Value::String(value) => Some(value.clone()),
         serde_json::Value::Number(value) => Some(value.to_string()),
         _ => None,
-    }).filter(|value| !value.is_empty()).unwrap_or_else(|| format!("tokenme-stdio-{sequence}"));
+    }).filter(|value| !value.is_empty()).unwrap_or_else(|| format!("kimo-token-stdio-{sequence}"));
     let now_ms = usage_core::report::now_ms();
     let expires_at_ms = now_ms.saturating_add(usage_device_sync::MAX_DIAGNOSTICS_REQUEST_TTL_MS.min(5_000));
     let auth = DiagnosticsRequestAuth::new_signed(grant, identity, session_id, method, &params, request_id, now_ms, expires_at_ms)
@@ -328,7 +328,7 @@ mod diagnostics_bridge_tests {
 
 // ---------------------------------------------------------------- budget
 
-/// Read, set and clear the caps in `tokenme/settings.json`. No index needed: this
+/// Read, set and clear the caps in `kimo-token/settings.json`. No index needed: this
 /// only touches the settings file, and the report picks the caps up from there.
 pub fn budget(action: &crate::args::BudgetCmd, json: bool) -> Result<(), String> {
     use usage_core::budget::{load_budgets, store_budget, Budget};
@@ -341,8 +341,8 @@ pub fn budget(action: &crate::args::BudgetCmd, json: bool) -> Result<(), String>
                 return Ok(());
             }
             if budgets.is_empty() {
-                println!("no budgets set — tokenme can only show vendor-reported windows until you add one");
-                println!("  tokenme budget set <tool> --daily 5 --monthly 50");
+                println!("no budgets set — kimo-token can only show vendor-reported windows until you add one");
+                println!("  kimo-token budget set <tool> --daily 5 --monthly 50");
                 return Ok(());
             }
             let mut t = Table::new(&["Tool", "Daily", "Monthly"]).right(&[1, 2]);
@@ -403,10 +403,13 @@ pub fn detect(ctx: &Ctx) -> Result<(), String> {
     let (detected, problems) = ctx.detect();
     if !ctx.quiet() {
         for p in &problems {
-            eprintln!("tokenme: {p}");
+            eprintln!("kimo-token: {p}");
         }
     }
-    let statuses = ctx.index.source_statuses(&detected).map_err(|e| e.to_string())?;
+    let mut statuses = ctx.index.source_statuses(&detected).map_err(|e| e.to_string())?;
+    if !ctx.g.tool.is_empty() {
+        statuses.retain(|status| ctx.g.tool.contains(&status.id));
+    }
 
     if ctx.g.json {
         print_json(&statuses);
@@ -521,7 +524,7 @@ fn index_line(ctx: &Ctx, report: Option<&IngestReport>) -> String {
 pub fn workbuddy_login() -> Result<(), String> {
     let summary = usage_quota::workbuddy_login()?;
     println!("{summary}");
-    println!("run `tokenme quota` to see the WorkBuddy credit bars");
+    println!("run `kimo-token quota` to see the WorkBuddy credit bars");
     Ok(())
 }
 
@@ -1474,7 +1477,7 @@ pub fn index(
             .map_err(|e| format!("rebuild failed: {e}"))?;
         for err in ctx.index.errors() {
             if !ctx.quiet() {
-                eprintln!("tokenme: {err}");
+                eprintln!("kimo-token: {err}");
             }
         }
         last = Some(report);
@@ -1577,7 +1580,7 @@ pub fn index(
         )
     );
     for err in ctx.index.errors() {
-        eprintln!("tokenme: {err}");
+        eprintln!("kimo-token: {err}");
     }
     Ok(())
 }
@@ -1604,7 +1607,7 @@ fn window_label(lo_ms: i64, hi_ms: i64) -> String {
 /// The write half of machine-to-machine sync: dump a window of this machine's
 /// events as a JSONL.gz bundle next to its manifest. The default directory is
 /// the one the menu-bar engine watches, so on a Linux collector the whole
-/// writer is `tokenme export --days 30` from a systemd timer.
+/// writer is `kimo-token export --days 30` from a systemd timer.
 pub fn export_sync(
     ctx: &mut Ctx,
     days: i64,
@@ -1627,7 +1630,7 @@ pub fn export_sync(
         .unwrap_or_else(usage_index::hostname);
     let rep = ctx
         .index
-        .export_sync(&usage_index::ExportOptions { days, out_dir, origin })
+        .export_sync_for_tools(&usage_index::ExportOptions { days, out_dir, origin }, &ctx.g.tool)
         .map_err(|e| e.to_string())?;
 
     if ctx.g.json {
@@ -1672,7 +1675,7 @@ pub fn import_sync(ctx: &mut Ctx, file: &std::path::Path, dry_run: bool) -> Resu
         .map_err(|e| e.to_string())?;
     if rep.self_import && !ctx.quiet() {
         eprintln!(
-            "tokenme: bundle origin {:?} equals this machine's hostname — merging a copy of this \
+            "kimo-token: bundle origin {:?} equals this machine's hostname — merging a copy of this \
              machine's own export; rows stay keyed as foreign",
             rep.origin
         );
@@ -1736,7 +1739,7 @@ pub fn sync_upload(
     _generation: u64,
     _days: i64,
 ) -> Result<(), String> {
-    let identity = DeviceIdentity::load_or_create(&identity_path, origin, "tokenme-cli")
+    let identity = DeviceIdentity::load_or_create(&identity_path, origin, "kimo-token-cli")
         .map_err(|e| format!("cannot load sync identity {}: {e}", identity_path.display()))?;
     let cert_der = usage_device_sync::load_pem_certificate(&trust_cert)
         .map_err(|e| format!("cannot load pinned trust certificate {}: {e}", trust_cert.display()))?;
@@ -1807,7 +1810,7 @@ pub fn sync_run(ctx: &mut Ctx) -> Result<(), String> {
             .ok_or_else(|| "no secondary sync configuration; pair this device first".to_string())?;
         if !config.enabled { return Err("secondary sync is disabled".into()); }
         let identity = DeviceIdentity::load_or_create(
-            config.identity_path.clone(), config.origin.clone(), "tokenme-cli secondary",
+            config.identity_path.clone(), config.origin.clone(), "kimo-token-cli secondary",
         ).map_err(|error| format!("cannot load secondary identity: {error}"))?;
         if identity.device_id != config.device_id || identity.origin != config.origin {
             return Err("secondary identity does not match the paired device configuration".into());
@@ -1867,7 +1870,7 @@ pub fn sync_reset(ctx: &Ctx) -> Result<(), String> {
     // the session; resetting under it would let the next pass resurrect half
     // of the old state. Stop it first.
     if secondary_runtime_status(&ctx.db_path) {
-        return Err("secondary sync runtime is running; run `tokenme sync stop` before `tokenme sync reset`".into());
+        return Err("secondary sync runtime is running; run `kimo-token sync stop` before `kimo-token sync reset`".into());
     }
     let mut store = SyncStore::open(&ctx.db_path, config.primary_id.clone()).map_err(|error| error.to_string())?;
     let summary = store.reset_secondary_sync_state(ctx.now_ms).map_err(|error| error.to_string())?;
@@ -1875,11 +1878,11 @@ pub fn sync_reset(ctx: &Ctx) -> Result<(), String> {
         println!("{}", serde_json::to_string_pretty(&serde_json::json!({
             "device_id": summary.device_id,
             "events_kept": store.index().event_count().map_err(|error| error.to_string())?,
-            "next": "run `tokenme sync run` to re-establish the session and re-sync",
+            "next": "run `kimo-token sync run` to re-establish the session and re-sync",
         })).map_err(|error| error.to_string())?);
     } else {
         println!("reset {}: session checkpoints discarded; local events kept", summary.device_id);
-        println!("next: `tokenme sync run` re-establishes the session and re-ships the local rollup snapshot");
+        println!("next: `kimo-token sync run` re-establishes the session and re-ships the local rollup snapshot");
     }
     Ok(())
 }
@@ -1981,7 +1984,7 @@ fn run_secondary_service(
                     if !secondary_binding_enabled(&worker_db) { return Err(error); }
                     failures = failures.saturating_add(1);
                     let delay = restart_delay(failures);
-                    eprintln!("tokenme: secondary sync runtime could not start ({error}); retrying in {}s", delay.as_secs());
+                    eprintln!("kimo-token: secondary sync runtime could not start ({error}); retrying in {}s", delay.as_secs());
                     if !sleep_until_retry(&thread_stop, delay) { return Ok(RuntimeRunReport::default()); }
                     continue;
                 }
@@ -1996,7 +1999,7 @@ fn run_secondary_service(
                         claim_wait: std::time::Duration::from_millis(500),
                     };
                     if let Err(error) = store.index_mut().ingest_with(&adapters, &filter, &options) {
-                        eprintln!("tokenme: resident sync ingest failed ({error}); pending local data was retained");
+                        eprintln!("kimo-token: resident sync ingest failed ({error}); pending local data was retained");
                     }
                     Ok(())
                 })
@@ -2011,24 +2014,24 @@ fn run_secondary_service(
             match outcome {
                 Ok(Ok(report)) => {
                     if !secondary_binding_enabled(&worker_db) { return Ok(report); }
-                    eprintln!("tokenme: secondary sync runtime stopped unexpectedly; restarting");
+                    eprintln!("kimo-token: secondary sync runtime stopped unexpectedly; restarting");
                 }
                 Ok(Err(error)) => {
                     if !secondary_binding_enabled(&worker_db) { return Err(error.to_string()); }
-                    eprintln!("tokenme: secondary sync runtime failed ({error}); restarting");
+                    eprintln!("kimo-token: secondary sync runtime failed ({error}); restarting");
                 }
                 Err(_) => {
                     if !secondary_binding_enabled(&worker_db) { return Err("secondary runtime panicked".into()); }
-                    eprintln!("tokenme: secondary sync runtime panicked; restarting");
+                    eprintln!("kimo-token: secondary sync runtime panicked; restarting");
                 }
             }
             failures = if started.elapsed() >= Duration::from_secs(60) { 0 } else { failures.saturating_add(1) };
             let delay = restart_delay(failures);
-            eprintln!("tokenme: retrying secondary sync in {}s", delay.as_secs());
+            eprintln!("kimo-token: retrying secondary sync in {}s", delay.as_secs());
             if !sleep_until_retry(&thread_stop, delay) { return Ok(RuntimeRunReport::default()); }
         }
     });
-    eprintln!("tokenme: secondary sync runtime started; stop with `tokenme sync stop`");
+    eprintln!("kimo-token: secondary sync runtime started; stop with `kimo-token sync stop`");
     let mut stop_requested = false;
     let mut control_error = None;
     'service: loop {
@@ -2112,12 +2115,12 @@ fn run_secondary_service(
             let filter = DateFilter::new(Some(retention_cutoff(usage_core::report::now_ms())), None);
             let options = usage_index::IngestOptions { force: false, claim_wait: std::time::Duration::from_millis(500) };
             if let Err(error) = store.index_mut().ingest_with(&adapters, &filter, &options) {
-                eprintln!("tokenme: resident sync ingest failed ({error}); pending local data was retained");
+                eprintln!("kimo-token: resident sync ingest failed ({error}); pending local data was retained");
             }
             Ok(())
         })
     });
-    eprintln!("tokenme: secondary sync runtime started; stop with `tokenme sync stop`");
+    eprintln!("kimo-token: secondary sync runtime started; stop with `kimo-token sync stop`");
     let joined = join.join().map_err(|_| "secondary runtime thread panicked".to_string());
     let control_result = control.shutdown();
     let result = match joined {
@@ -2209,7 +2212,7 @@ pub fn sync_pair(
             return Err("pairing invite certificate does not match its advertised pin".into());
         }
         let identity_path = identity_path.unwrap_or(cli_sync_dir_for_db(&ctx.db_path)?.join("secondary-identity.json"));
-        let identity = DeviceIdentity::load_or_create(&identity_path, origin.unwrap_or_else(|| "secondary".into()), "tokenme-cli secondary")
+        let identity = DeviceIdentity::load_or_create(&identity_path, origin.unwrap_or_else(|| "secondary".into()), "kimo-token-cli secondary")
             .map_err(|error| format!("cannot load sync identity: {error}"))?;
         let server_name = details.server_name.unwrap_or_else(|| "localhost".into());
         let request = PairingRequest::new(&details.invite, &identity, os.unwrap_or_else(|| std::env::consts::OS.into())).map_err(|error| error.to_string())?;
@@ -2224,7 +2227,7 @@ pub fn sync_pair(
             expected_generation: None, enabled: true, capture_enabled: true, last_error: None, last_manifest_hash: None, last_gzip_hash: None, last_connected_at_ms: None,
             last_ack_generation: None, last_ack_receipt_hash: None,
         }, ctx.now_ms).map_err(|error| error.to_string())?;
-        if ctx.g.json { print_json(&state); } else { println!("pairing request {} ({}) — secondary runtime can now use `tokenme sync run`", state.request_id, state.status); }
+        if ctx.g.json { print_json(&state); } else { println!("pairing request {} ({}) — secondary runtime can now use `kimo-token sync run`", state.request_id, state.status); }
         return Ok(());
     }
 
@@ -2237,7 +2240,7 @@ pub fn sync_pair(
     let identity_path = identity_path.ok_or_else(|| "--identity is required unless --invite is used".to_string())?;
     let origin = origin.ok_or_else(|| "--origin is required unless --invite is used".to_string())?;
     let os = os.unwrap_or_else(|| std::env::consts::OS.into());
-    let identity = DeviceIdentity::load_or_create(&identity_path, origin, "tokenme-cli").map_err(|error| error.to_string())?;
+    let identity = DeviceIdentity::load_or_create(&identity_path, origin, "kimo-token-cli").map_err(|error| error.to_string())?;
     let invite_secret_hex = if invite_secret_hex == "-" {
         let mut input = String::new();
         std::io::stdin().read_to_string(&mut input).map_err(|error| format!("cannot read invite secret from stdin: {error}"))?;
@@ -2297,7 +2300,7 @@ pub fn sync_serve(ctx: &Ctx, bind: String, cert: Option<PathBuf>, key: Option<Pa
             Err(error) => {
                 failures = failures.saturating_add(1);
                 let delay = restart_delay(failures);
-                eprintln!("tokenme: cannot open the sync database ({error}); retrying in {}s", delay.as_secs());
+                eprintln!("kimo-token: cannot open the sync database ({error}); retrying in {}s", delay.as_secs());
                 thread::sleep(delay);
                 continue;
             }
@@ -2315,12 +2318,12 @@ pub fn sync_serve(ctx: &Ctx, bind: String, cert: Option<PathBuf>, key: Option<Pa
             Err(error) => {
                 failures = failures.saturating_add(1);
                 let delay = restart_delay(failures);
-                eprintln!("tokenme: cannot start the sync primary ({error}); retrying in {}s", delay.as_secs());
+                eprintln!("kimo-token: cannot start the sync primary ({error}); retrying in {}s", delay.as_secs());
                 thread::sleep(delay);
                 continue;
             }
         };
-        eprintln!("tokenme: sync primary listening on {}", server.local_addr().map_err(|e| e.to_string())?);
+        eprintln!("kimo-token: sync primary listening on {}", server.local_addr().map_err(|e| e.to_string())?);
         let started = std::time::Instant::now();
         match server.run() {
             Ok(()) => return Ok(()),
@@ -2330,7 +2333,7 @@ pub fn sync_serve(ctx: &Ctx, bind: String, cert: Option<PathBuf>, key: Option<Pa
                 // the next attempt a fresh backoff budget.
                 failures = if started.elapsed() >= Duration::from_secs(60) { 0 } else { failures.saturating_add(1) };
                 let delay = restart_delay(failures);
-                eprintln!("tokenme: sync primary stopped ({error}); restarting in {}s", delay.as_secs());
+                eprintln!("kimo-token: sync primary stopped ({error}); restarting in {}s", delay.as_secs());
                 thread::sleep(delay);
             }
         }

@@ -1,11 +1,11 @@
 {
   "manifestVersion": "1.0.0-alpha.1",
-  "id": "org.example.tokenme.reference",
+  "id": "org.example.kimo-token.reference",
   "version": "0.1.0",
-  "hostApi": "tokenme.plugin/0.1",
+  "hostApi": "kimo-token.plugin/0.1",
   "runtime": {
     "kind": "wasm-component",
-    "world": "tokenme:plugin/adapter@0.1.0",
+    "world": "kimo-token:plugin/adapter@0.1.0",
     "entrypoint": "dist/plugin.wasm"
   },
   "tool": { "id": "example_ide", "nameKey": "tool.name", "icon": "assets/icon.svg", "accent": "#2563EB" },

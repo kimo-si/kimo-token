@@ -63,8 +63,8 @@ export function symbolIdentity(exe, pdb) {
 
 export function archive(exe, root = repoRoot) {
   exe = resolve(exe);
-  const pdb = join(dirname(exe), "tokenme.pdb");
-  if (!existsSync(pdb)) throw new Error("Matching tokenme.pdb is missing; cannot archive this build.");
+  const pdb = join(dirname(exe), "kimo-token.pdb");
+  if (!existsSync(pdb)) throw new Error("Matching kimo-token.pdb is missing; cannot archive this build.");
   const staged = stagedDirectory(root);
   const info = JSON.parse(readFileSync(join(staged, "build-info.json"), "utf8"));
   if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/.test(info.version) || !/^[a-f0-9]{64}$/.test(info.source_sha256)) throw new Error("Invalid build identity.");
@@ -78,12 +78,12 @@ export function archive(exe, root = repoRoot) {
   if (existsSync(manifestPath)) {
     const prior = JSON.parse(readFileSync(manifestPath, "utf8"));
     if (prior.exe_sha256 !== exeHash || prior.pdb_sha256 !== pdbHash) throw new Error("Archive identity collision.");
-    if (sha256(readFileSync(join(directory, "TokenMe.exe"))) !== exeHash || sha256(readFileSync(join(directory, "tokenme.pdb"))) !== pdbHash) throw new Error("Archived EXE/PDB files were altered.");
+    if (sha256(readFileSync(join(directory, "kimo-token.exe"))) !== exeHash || sha256(readFileSync(join(directory, "kimo-token.pdb"))) !== pdbHash) throw new Error("Archived EXE/PDB files were altered.");
     return directory;
   }
   mkdirSync(directory, { recursive: true });
-  copyFileSync(exe, join(directory, "TokenMe.exe"));
-  copyFileSync(pdb, join(directory, "tokenme.pdb"));
+  copyFileSync(exe, join(directory, "kimo-token.exe"));
+  copyFileSync(pdb, join(directory, "kimo-token.pdb"));
   copyFileSync(join(staged, "source.patch"), join(directory, "source.patch"));
   const sources = JSON.parse(readFileSync(join(staged, "extra-sources.json"), "utf8"));
   for (const [path, bytes] of Object.entries(sources)) {

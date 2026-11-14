@@ -1,5 +1,5 @@
 {
-  "schema": "tokenme.audit-excerpts/0.1",
+  "schema": "kimo-token.audit-excerpts/0.1",
   "scope": "design_counterexamples_not_runtime_poc",
   "documents": {
     "IMPLEMENTATION_SPEC.md": {

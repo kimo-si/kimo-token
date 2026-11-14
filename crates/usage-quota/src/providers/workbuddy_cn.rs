@@ -79,7 +79,7 @@ impl Transport {
 
 fn bare_auth() -> Option<Value> {
     let token = std::env::var("WORKBUDDY_CN_TOKEN").ok().or_else(|| {
-        std::fs::read_to_string(dirs::config_dir()?.join("tokenme/workbuddy-cn.token")).ok()
+        std::fs::read_to_string(usage_core::paths::config_dir()?.join("workbuddy-cn.token")).ok()
     })?;
     let token = token.trim();
     (!token.is_empty()).then(|| json!({"auth":{"accessToken":token,"domain":"www.workbuddy.cn"}}))
@@ -113,7 +113,7 @@ struct CheckinState { account: String, day: String }
 
 fn state_path() -> Option<PathBuf> {
     std::env::var_os("WORKBUDDY_CN_CHECKIN_STATE").filter(|v| !v.is_empty()).map(PathBuf::from)
-        .or_else(|| dirs::config_dir().map(|d| d.join("tokenme/quota/workbuddy_cn_checkin.json")))
+        .or_else(|| usage_core::paths::config_dir().map(|d| d.join("quota/workbuddy_cn_checkin.json")))
 }
 
 fn beijing_day(now: chrono::DateTime<chrono::Utc>) -> (String, i64) {
@@ -187,7 +187,7 @@ pub fn manual_checkin() -> Result<(bool, String), String> {
     if result.0 {
         let samples = meter(&mut transport, true, reset);
         if !samples.is_empty() {
-            if let Some(cache) = crate::cache::Cache::open("tokenme/quota", crate::TTL) { cache.store("workbuddy_cn", &samples); }
+            if let Some(cache) = crate::cache::Cache::open("quota", crate::TTL) { cache.store("workbuddy_cn", &samples); }
         }
     }
     Ok(result)

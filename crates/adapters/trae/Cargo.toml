@@ -3,7 +3,7 @@ name = "usage-adapter-trae"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "tokenme source adapter: trae (SQLCipher agent database)"
+description = "kimo-token source adapter: trae (SQLCipher agent database)"
 
 [dependencies]
 usage-core.workspace = true

@@ -105,7 +105,7 @@ fn post_meter(token: &str) -> Option<Value> {
         .set("origin", "https://www.workbuddy.cn")
         .set("referer", "https://www.workbuddy.cn/profile/plans-usage")
         .set("x-client-platform", "web")
-        .set("user-agent", concat!("tokenme/", env!("CARGO_PKG_VERSION")))
+        .set("user-agent", concat!("kimo-token/", env!("CARGO_PKG_VERSION")))
         .send_string(
             &json!({
                 "PageNumber": 1,

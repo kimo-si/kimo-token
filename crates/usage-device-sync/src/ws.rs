@@ -1,4 +1,4 @@
-//! WebSocket bidirectional sync protocol for TokenMe multi-device synchronization.
+//! WebSocket bidirectional sync protocol for kimo-token multi-device synchronization.
 //!
 //! Provides persistent long-lived full-duplex communication between Secondary
 //! clients and Primary server, with heartbeat pings, symmetric rollup snapshot
@@ -515,7 +515,7 @@ mod tests {
     fn rollup_row(day: &str, tool: &str, n: i64) -> crate::transport::RollupRow {
         crate::transport::RollupRow {
             day: day.into(), origin: String::new(), tool: tool.into(), session: "session".into(),
-            project: "project-tokenme".into(), model: "gpt-5".into(), meter: "tokens".into(),
+            project: "project-kimo-token".into(), model: "gpt-5".into(), meter: "tokens".into(),
             in_tok: 100.0, cc_tok: 0.0, cr_tok: 0.0, out_tok: 50.0, reason_tok: 0.0, credits: 0.0,
             n, nonzero: 1, min_ts: 1_000, max_ts: 2_000,
         }

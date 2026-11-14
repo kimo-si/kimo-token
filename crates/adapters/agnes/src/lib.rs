@@ -13,7 +13,7 @@
 //! total_tokens` in 554 of 554 rows with `cache_read_tokens <= input_tokens` in all
 //! of them, so the cached prefix is netted back out into its own stage before the row
 //! leaves this crate ([`parser`]). `cost` and `cost_source` are NULL in every row and
-//! are never imported: tokenme prices centrally from the shared models.dev table.
+//! are never imported: kimo-token prices centrally from the shared models.dev table.
 //!
 //! Owned by the agnes-adapter workstream. The public surface (`AgnesAdapter`,
 //! `TOOL_ID`) follows the sibling adapters, and nothing registers this crate yet.

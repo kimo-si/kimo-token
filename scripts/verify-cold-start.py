@@ -19,7 +19,7 @@ the pictures settle what it was.
 
 Usage:
   scripts/verify-cold-start.py                       # whole display, auto bbox
-  scripts/verify-cold-start.py --app dist/TokenMe.app --duration 10
+  scripts/verify-cold-start.py --app dist/kimo-token.app --duration 10
   scripts/verify-cold-start.py --region 1500,30,420,700   # points, top-left origin
   scripts/verify-cold-start.py --movie old.mov       # re-read a recording, no relaunch
 
@@ -111,24 +111,24 @@ def stop_movie(proc, out, timeout=15.0):
 def bundle_processes(app):
     """Every name this bundle's executable could be running as.
 
-    `mainBinaryName` has been `tokenme-bar`, `tokenme` and `TokenMe`, and copying a
+    `mainBinaryName` has been `kimo-token-bar`, `kimo-token` and `kimo-token`, and copying a
     new bundle over an old one on a case-insensitive volume keeps the earlier
     spelling on disk — so the historical names are included, and matching is exact
     (`pgrep -x`) rather than a substring that could hit an unrelated process.
     """
     found = {p.name for p in (Path(app) / "Contents" / "MacOS").glob("*") if p.is_file()}
-    return found | {"tokenme", "TokenMe", "tokenme-bar"}
+    return found | {"kimo-token", "kimo-token", "kimo-token-bar"}
 
 
 def launch(app):
     """Cold-start the app with its panel opening itself.
 
-    `TOKENME_SHOW_PANEL` is the app's own QA hook (see lib.rs): the window is
+    `KIMO_TOKEN_SHOW_PANEL` is the app's own QA hook (see lib.rs): the window is
     ordered front as early as the process can manage, which is the worst case for
     the page and therefore the case worth measuring. The bundle's binary is exec'd
     directly because `open -a` does not pass the environment through. It is found
     by listing `Contents/MacOS`, not by guessing its name: `mainBinaryName` has
-    been `tokenme`, `TokenMe`, and `tokenme-bar` across this product's life, and a
+    been `kimo-token`, `kimo-token`, and `kimo-token-bar` across this product's life, and a
     hardcoded name here would silently measure nothing after a rename.
     """
     binaries = sorted(
@@ -141,7 +141,7 @@ def launch(app):
     binary = binaries[0]
     if not binary.exists():
         sys.exit(f"verify-cold-start: {binary} is not a built app bundle")
-    env = dict(os.environ, TOKENME_SHOW_PANEL="1")
+    env = dict(os.environ, KIMO_TOKEN_SHOW_PANEL="1")
     return subprocess.Popen(
         [str(binary)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env
     )
@@ -197,7 +197,7 @@ def panel_size_from_config():
     as a bigger change than the panel does, and one run really did report a
     394×650 "blank panel" that turned out to be somebody's ChatGPT window.
     """
-    conf = Path(__file__).resolve().parent.parent / "apps/tokenme-bar/src-tauri/tauri.conf.json"
+    conf = Path(__file__).resolve().parent.parent / "apps/kimo-token-bar/src-tauri/tauri.conf.json"
     text = conf.read_text(encoding="utf-8")
     m = re.search(r'"width":\s*([0-9.]+)', text)
     n = re.search(r'"height":\s*([0-9.]+)', text)
@@ -414,11 +414,11 @@ def session_guard():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--region", type=parse_region, help="x,y,w,h in points")
-    ap.add_argument("--app", default="/Applications/TokenMe.app")
+    ap.add_argument("--app", default="/Applications/kimo-token.app")
     ap.add_argument("--duration", type=float, default=9.0)
     ap.add_argument("--native-width", type=int, default=1920, help="logical display width in points")
     ap.add_argument("--panel-size", help="override the panel's WxH in points (default: tauri.conf.json)")
-    ap.add_argument("--out-dir", default="/tmp/tokenme-coldstart")
+    ap.add_argument("--out-dir", default="/tmp/kimo-token-coldstart")
     ap.add_argument("--no-quit", action="store_true")
     ap.add_argument(
         "--movie",
@@ -450,7 +450,7 @@ def main():
 
     if not (args.no_quit or args.movie):
         # Kill by the names this bundle can actually produce, not by one hardcoded
-        # spelling: `mainBinaryName` has been tokenme-bar, tokenme and TokenMe, and a
+        # spelling: `mainBinaryName` has been kimo-token-bar, kimo-token and kimo-token, and a
         # case-insensitive copy-over keeps the old one running. A surviving instance
         # does not fail this run — it quietly measures a warm open and reports the
         # panel as never appearing, which is the exact wrong verdict twice over.

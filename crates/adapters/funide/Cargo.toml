@@ -3,7 +3,7 @@ name = "usage-adapter-funide"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "tokenme source adapter: funide"
+description = "kimo-token source adapter: funide"
 
 [dependencies]
 usage-core.workspace = true

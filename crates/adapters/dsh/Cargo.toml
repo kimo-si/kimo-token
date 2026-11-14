@@ -3,7 +3,7 @@ name = "usage-adapter-dsh"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "tokenme source adapter: dsh"
+description = "kimo-token source adapter: dsh"
 
 [dependencies]
 usage-core.workspace = true

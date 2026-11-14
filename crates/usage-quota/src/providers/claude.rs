@@ -14,7 +14,7 @@ use crate::QuotaProbe;
 
 const ENDPOINT: &str = "https://api.anthropic.com/api/oauth/usage";
 /// Required by the OAuth API; without a User-Agent the endpoint answers 429.
-const USER_AGENT: &str = concat!("tokenme/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("kimo-token/", env!("CARGO_PKG_VERSION"));
 const BETA: &str = "oauth-2025-04-20";
 
 pub struct ClaudeQuota;

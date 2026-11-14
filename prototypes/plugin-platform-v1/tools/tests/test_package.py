@@ -16,14 +16,14 @@ SPEC.loader.exec_module(kit)
 def example_files():
     _, files = kit.project_files()
     files["dist/plugin.wasm"] = kit.COMPONENT_HEADER + b"synthetic-not-executable"
-    files["build-info.json"] = kit.encoded({"schema":"tokenme.build/0.1", "toolchain":kit.decoded((kit.ROOT/"toolchain.json").read_bytes()), "sourceTreeSha256":"a"*64, "moduleSha256":kit.hashlib.sha256(files["dist/plugin.wasm"]).hexdigest(), "sdk":"tokenme-plugin-sdk-reference", "sdkVersion":"0.1.0"})
+    files["build-info.json"] = kit.encoded({"schema":"kimo-token.build/0.1", "toolchain":kit.decoded((kit.ROOT/"toolchain.json").read_bytes()), "sourceTreeSha256":"a"*64, "moduleSha256":kit.hashlib.sha256(files["dist/plugin.wasm"]).hexdigest(), "sdk":"kimo-token-plugin-sdk-reference", "sdkVersion":"0.1.0"})
     return seal(files)
 
 
 def seal(files):
     files = {key:value for key,value in files.items() if key not in ("checksums.json","signature.json")}
-    files["checksums.json"] = kit.encoded({"schema":"tokenme.package-integrity/0.1","files":{key:{"sha256":kit.hashlib.sha256(value).hexdigest(),"size":len(value)} for key,value in files.items()}})
-    files["signature.json"] = kit.encoded({"schema":"tokenme.package-signature/0.1","state":"unsigned-local"})
+    files["checksums.json"] = kit.encoded({"schema":"kimo-token.package-integrity/0.1","files":{key:{"sha256":kit.hashlib.sha256(value).hexdigest(),"size":len(value)} for key,value in files.items()}})
+    files["signature.json"] = kit.encoded({"schema":"kimo-token.package-signature/0.1","state":"unsigned-local"})
     return files
 
 
@@ -91,8 +91,8 @@ class PackageTests(unittest.TestCase):
         self.assert_code("LOCALE.PLACEHOLDERS", lambda:kit.validate_manifest(manifest,changed))
 
     def test_unsigned_install_requires_explicit_local_flag(self):
-        with tempfile.TemporaryDirectory(prefix="tokenme-kit-") as temporary:
-            package = Path(temporary)/"fixture.tokenme-plugin"
+        with tempfile.TemporaryDirectory(prefix="kimo-token-kit-") as temporary:
+            package = Path(temporary)/"fixture.kimo-token-plugin"
             package.write_bytes(kit.archive_bytes(example_files()))
             self.assert_code("SIGNATURE.LOCAL_CONSENT_REQUIRED", lambda:kit.install(package))
 

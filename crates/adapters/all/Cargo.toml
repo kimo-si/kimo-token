@@ -3,7 +3,7 @@ name = "usage-adapter-all"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Static registry of built-in tokenme source adapters"
+description = "Static registry of built-in kimo-token source adapters"
 
 [dependencies]
 usage-core.workspace = true

@@ -1,4 +1,4 @@
-//! Spend caps the user sets in tokenme itself.
+//! Spend caps the user sets in kimo-token itself.
 //!
 //! ## Why this exists next to the vendor probes
 //!
@@ -17,10 +17,10 @@
 //!
 //! ## Storage
 //!
-//! The same `tokenme/settings.json` the menu-bar app writes, under the platform
+//! The same `kimo-token/settings.json` the menu-bar app writes, under the platform
 //! config dir. Only the `budgets` key is read or rewritten here, and the rest of
 //! the file is preserved as-is, so the app's tray/autostart settings survive a
-//! `tokenme budget set …`.
+//! `kimo-token budget set …`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -45,10 +45,10 @@ impl Budget {
     }
 }
 
-/// `~/Library/Preferences/tokenme/settings.json` on macOS, `$XDG_CONFIG_HOME`
+/// `~/Library/Application Support/dev.kimo-token.bar/settings.json` on macOS, `$XDG_CONFIG_HOME`
 /// elsewhere — the file the menu-bar app owns.
 pub fn settings_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("tokenme").join("settings.json"))
+    crate::paths::config_dir().map(|dir| dir.join("settings.json"))
 }
 
 /// The `budgets` map from the settings file. A missing, unreadable or malformed
@@ -108,7 +108,7 @@ fn store_budget_at(path: &std::path::Path, tool: &str, budget: Budget) -> std::i
     crate::replace_file(&tmp, path)
 }
 
-/// One bar per open window, from what tokenme already charged.
+/// One bar per open window, from what kimo-token already charged.
 ///
 /// `spent_today` / `spent_month` are per-tool cost sums for the same local
 /// boundaries the report's day/month windows use, so the bar and the number the

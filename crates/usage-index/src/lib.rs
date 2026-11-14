@@ -24,6 +24,19 @@ mod watcher;
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
+
+// 归档新旧命名的同步文件，防止忘记的设备被再次导入。
+fn retire_sync_bundles(dir: &Path, origin: &str, stamp: u64) {
+    for brand in ["kimo-token", "tokenme"] {
+        for suffix in ["jsonl.gz", "manifest.json"] {
+            let stem = format!("{brand}-{origin}.{suffix}");
+            let source = dir.join(&stem);
+            if source.is_file() {
+                let _ = std::fs::rename(source, dir.join(format!("{stem}.forgotten-{stamp}")));
+            }
+        }
+    }
+}
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension};
@@ -37,7 +50,7 @@ pub use ingest::{
     retention_cutoff, IngestOptions, IngestReport, CLAIM_TTL_MS, RETENTION_DAYS,
 };
 pub use sync::{
-    default_sync_dir, hostname, sha256_file, ExportOptions, ExportReport, ImportOptions,
+    default_sync_dir, hostname, sha256_file, sync_import_dirs, ExportOptions, ExportReport, ImportOptions,
     ImportReport, SyncManifest, SyncSums, SYNC_FORMAT,
 };
 pub use watcher::Watcher;
@@ -543,10 +556,10 @@ impl Index {
         Ok((Self::setup(conn, Some(path))?, true))
     }
 
-    /// `~/.local/share/tokenme/index.db` style location, or `None` when the
+    /// `~/.local/share/kimo-token/index.db` style location, or `None` when the
     /// platform exposes no data dir.
     pub fn default_path() -> Option<PathBuf> {
-        dirs::data_dir().map(|d| d.join("tokenme").join("index.db"))
+        usage_core::paths::data_dir().map(|d| d.join("index.db"))
     }
 
     pub(crate) fn setup(conn: Connection, path: Option<PathBuf>) -> Result<Self> {
@@ -1459,7 +1472,7 @@ impl Index {
     /// Forgets one historical import origin end to end: its rollup rows, the
     /// per-source file cursors that would re-import it, and the import
     /// registry that keeps the origin on the panel's machine list — and
-    /// retires the source bundle pair in `~/tokenme-sync` by renaming it out
+    /// retires the source bundle pair in `~/kimo-token-sync` by renaming it out
     /// of the importer's `*.jsonl.gz` view (`.forgotten-<ts>` suffix,
     /// recoverable by renaming back). Without that retirement the very next
     /// ingest pass re-imports the bundle: the registry rows were the only
@@ -1467,7 +1480,7 @@ impl Index {
     /// The rollup rows ARE the machine's money on screen (the report folds
     /// from them), so removing them removes the machine; the raw events
     /// behind them stay. Refused for the local machine's empty origin — this
-    /// door is for `~/tokenme-sync` history like an mbp that no longer syncs.
+    /// door is for `~/kimo-token-sync` history like an mbp that no longer syncs.
     pub fn forget_imported_origin(&mut self, origin: &str) -> Result<u64> {
         if origin.is_empty() {
             return Err(Error::Sync("the local machine's origin cannot be forgotten".into()));
@@ -1477,8 +1490,8 @@ impl Index {
             .execute("DELETE FROM event_rollup WHERE origin = ?1", params![origin])
             .map_err(sql_err)? as u64;
         tx.execute(
-            "DELETE FROM meta WHERE key = ?1 OR (key LIKE 'sync:file:' || ?2 || '%')",
-            params![format!("sync:linux:{origin}"), format!("tokenme-{origin}.jsonl.gz")],
+            "DELETE FROM meta WHERE key = ?1 OR key LIKE 'sync:file:' || ?2 || '%' OR key LIKE 'sync:file:' || ?3 || '%'",
+            params![format!("sync:linux:{origin}"), format!("kimo-token-{origin}.jsonl.gz"), format!("tokenme-{origin}.jsonl.gz")],
         )
         .map_err(sql_err)?;
         tx.commit().map_err(sql_err)?;
@@ -1490,14 +1503,8 @@ impl Index {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        if let Some(dir) = crate::sync::default_sync_dir() {
-            for suffix in ["jsonl.gz", "manifest.json"] {
-                let source = dir.join(format!("tokenme-{origin}.{suffix}"));
-                let retired = dir.join(format!("tokenme-{origin}.{suffix}.forgotten-{stamp}"));
-                if source.exists() {
-                    let _ = std::fs::rename(&source, &retired);
-                }
-            }
+        for dir in crate::sync::sync_import_dirs() {
+            retire_sync_bundles(&dir, origin, stamp);
         }
         Ok(rollup_removed)
     }

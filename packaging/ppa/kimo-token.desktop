@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=kimo-token
+Comment=AI token usage and cost monitor
+Exec=kimo-token-bar
+Icon=kimo-token
+Terminal=false
+Categories=Utility;
+StartupWMClass=kimo-token

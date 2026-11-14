@@ -10,9 +10,9 @@ for name, expected in manifest["sha256"].items():
     path = root / name
     if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
         raise SystemExit(f"Prepared source input changed or missing: {name}")
-for name in ("apps/tokenme-bar/dist/index.html",
-             "apps/tokenme-bar/src-tauri/resources/collector/tokenme-x86_64",
-             "apps/tokenme-bar/src-tauri/resources/collector/tokenme-aarch64"):
+for name in ("apps/kimo-token-bar/dist/index.html",
+             "apps/kimo-token-bar/src-tauri/resources/collector/kimo-token-x86_64",
+             "apps/kimo-token-bar/src-tauri/resources/collector/kimo-token-aarch64"):
     if name not in manifest["sha256"]:
         raise SystemExit(f"Required prepared input is not recorded: {name}")
 print(f"Verified {len(manifest['sha256'])} prepared inputs.")

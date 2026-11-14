@@ -31,7 +31,7 @@ pub(crate) struct Product {
     /// Tool id stamped onto every event this product's rows produce.
     pub id: &'static str,
     pub display: &'static str,
-    /// Names the data directory. This is tokenme's own override, following
+    /// Names the data directory. This is kimo-token's own override, following
     /// `OPENCODE_DATA_DIR`: the siblings publish no documented variable of
     /// their own, so a test (or a relocated install) is the only thing that sets it.
     pub env_dir: &'static str,
@@ -104,7 +104,7 @@ pub(crate) static MIMOCODE: Product = Product {
 /// discovered per sandbox rather than by joining a fixed file name.
 ///
 /// `OPEN_DESIGN_DATA_DIR` pins the `opencode-sessions` root (comma-separated,
-/// like the other siblings) — tokenme's own override, as the product documents
+/// like the other siblings) — kimo-token's own override, as the product documents
 /// none. The quota probe reads `~/.amr/config.json` separately.
 pub(crate) static OPEN_DESIGN: Product = Product {
     id: "opendesign",

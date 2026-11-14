@@ -1,6 +1,6 @@
 {
   "tool.name": "Example IDE",
-  "tool.description": "用于 TokenMe 插件协议草案的合成示例。",
+  "tool.description": "用于 kimo-token 插件协议草案的合成示例。",
   "settings.usage": "采集用量",
   "settings.quota": "读取配额",
   "settings.checkin": "自动签到",

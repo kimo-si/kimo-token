@@ -3,7 +3,7 @@ name = "usage-adapter-minimaxcode"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "tokenme source adapter: minimax-code"
+description = "kimo-token source adapter: minimax-code"
 
 [dependencies]
 usage-core.workspace = true

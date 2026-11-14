@@ -31,18 +31,18 @@ mkdir -p "$DIST"
 
 for ARCH in "${ARCHES[@]}"; do
   TARGET="${ARCH}-unknown-linux-musl"
-  echo "==> tokenme $V for $TARGET"
+  echo "==> kimo-token $V for $TARGET"
   rustup target list --installed | grep -qx "$TARGET" || rustup target add "$TARGET"
   cargo zigbuild --release -p usage-cli --target "$TARGET"
 
-  BIN="target/$TARGET/release/tokenme"
-  PKG="tokenme-cli-$V-$ARCH-linux-musl"
+  BIN="target/$TARGET/release/kimo-token"
+  PKG="kimo-token-cli-$V-$ARCH-linux-musl"
   STAGE="$DIST/$PKG"
   rm -rf "$STAGE"
   mkdir -p "$STAGE"
-  cp "$BIN" "$STAGE/tokenme"
+  cp "$BIN" "$STAGE/kimo-token"
   cp scripts/install-linux.sh "$STAGE/install-linux.sh"
-  chmod +x "$STAGE/tokenme" "$STAGE/install-linux.sh"
+  chmod +x "$STAGE/kimo-token" "$STAGE/install-linux.sh"
 
   TAR="$DIST/$PKG.tar.gz"
   # COPYFILE_DISABLE + --no-xattrs: without them macOS tar carries AppleDouble

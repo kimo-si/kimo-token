@@ -34,7 +34,7 @@ use crate::QuotaProbe;
 
 /// Used when a profile names no origin of its own.
 const DEFAULT_API: &str = "https://amr-api.open-design.ai";
-const USER_AGENT: &str = concat!("tokenme/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("kimo-token/", env!("CARGO_PKG_VERSION"));
 
 pub struct OpenDesignQuota;
 

@@ -1,4 +1,4 @@
-//! Shared contract for every tokenme binary (menu-bar app + CLI).
+//! Shared contract for every kimo-token binary (menu-bar app + CLI).
 //!
 //! Adapters depend on this crate and nothing else, so the two frontends can
 //! never drift apart on semantics or money math.
@@ -6,6 +6,7 @@
 pub mod adapter;
 pub mod budget;
 pub mod icons;
+pub mod paths;
 pub mod pricing;
 pub mod report;
 pub mod types;

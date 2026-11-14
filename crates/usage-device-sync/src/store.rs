@@ -355,6 +355,7 @@ pub struct SyncStore {
     /// public accessors.
     pub(crate) state: Connection,
     primary_id: String,
+    local_tool: Option<String>,
 }
 
 /// Opens a read-only SQLite connection with a short busy timeout. Read-only
@@ -381,7 +382,7 @@ impl SyncStore {
         // preserve the database rather than quarantine it as disposable cache.
         migrate(&mut index)?;
         migrate_state(&mut state, &primary_id)?;
-        let store = Self { index, state, primary_id };
+        let store = Self { index, state, primary_id, local_tool: None };
         store.write_capture_mirror()?;
         Ok(store)
     }
@@ -401,7 +402,7 @@ impl SyncStore {
         index.mark_device_sync_state().map_err(SyncError::from)?;
         migrate(&mut index)?;
         migrate_state(&mut state, &primary_id)?;
-        Ok(Self { index, state, primary_id })
+        Ok(Self { index, state, primary_id, local_tool: None })
     }
 
     /// The maintenance `open` performs eagerly: refresh the ingest-time capture
@@ -1238,9 +1239,9 @@ impl SyncStore {
         let mut statement = self.index.conn().prepare(
             "SELECT day, origin, tool, session, project, model, meter,
                     in_tok, cc_tok, cr_tok, out_tok, reason_tok, credits, n, nonzero, min_ts, max_ts
-             FROM event_rollup WHERE origin = ''",
+             FROM event_rollup WHERE origin = '' AND (?1 IS NULL OR tool = ?1)",
         ).map_err(sql_err)?;
-        let rows = statement.query_map([], |row| Ok(crate::transport::RollupRow {
+        let rows = statement.query_map(params![self.local_tool.as_deref()], |row| Ok(crate::transport::RollupRow {
             day: row.get(0)?,
             origin: row.get(1)?,
             tool: row.get(2)?,
@@ -1262,6 +1263,22 @@ impl SyncStore {
             .collect::<Result<Vec<_>, _>>()
             .map_err(sql_err)?;
         Ok(rows)
+    }
+
+    // 限制本机向配对设备发送的厂商用量，不修改存储中的历史数据。
+    pub fn with_local_tool(mut self, tool: impl Into<String>) -> Self {
+        self.local_tool = Some(tool.into());
+        self
+    }
+
+    // 使用与同步快照相同的范围判断本机汇总是否变化。
+    pub(crate) fn local_rollup_fingerprint(&self) -> SyncResult<(i64, f64, i64)> {
+        self.index.conn().query_row(
+            "SELECT count(*), IFNULL(sum(in_tok), 0), IFNULL(MAX(max_ts), 0)
+             FROM event_rollup WHERE origin = '' AND (?1 IS NULL OR tool = ?1)",
+            params![self.local_tool.as_deref()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).map_err(sql_err)
     }
 
     pub fn queue_secondary_disconnect(&mut self, config: &SecondarySyncConfig, now_ms: i64) -> SyncResult<()> {
@@ -1669,7 +1686,7 @@ impl SyncStore {
         if state.status == "pending" && self.primary_config()?.is_some_and(|config| config.auto_approve_pairing) {
             match self.approve_pairing(&state.request_id, now_ms) {
                 Ok(_) => return Ok(PairingRequestState { status: "paired".into(), ..state }),
-                Err(error) => eprintln!("tokenme sync: auto-approve failed, the request stays pending: {error}"),
+                Err(error) => eprintln!("kimo-token sync: auto-approve failed, the request stays pending: {error}"),
             }
         }
         Ok(state)
@@ -2643,10 +2660,10 @@ mod tests {
         // A foreign owner is never stolen: a CLI runtime or another device's
         // panel may be genuinely alive and keeps its wait-out semantics.
         store.release_scheduler_lease(&fresh).unwrap();
-        assert!(store.acquire_scheduler_lease("tokenme-cli-someone-else", 4_000, 900_000).unwrap());
+        assert!(store.acquire_scheduler_lease("kimo-token-cli-someone-else", 4_000, 900_000).unwrap());
         assert!(!store.acquire_scheduler_lease(&fresh, 5_000, 900_000).unwrap());
         assert!(!store.steal_stale_panel_lease(device).unwrap(), "a foreign CLI holder is left alone");
-        store.release_scheduler_lease("tokenme-cli-someone-else").unwrap();
+        store.release_scheduler_lease("kimo-token-cli-someone-else").unwrap();
         let other_panel = "panel-secondary-dev-OTHER-2222222222222222222222222222222222222222222222222222222222222222-x";
         assert!(store.acquire_scheduler_lease(other_panel, 6_000, 900_000).unwrap());
         assert!(!store.steal_stale_panel_lease(device).unwrap(), "another device's panel lease is left alone");
@@ -3655,6 +3672,22 @@ mod tests {
         assert_eq!(rows[0].n, 2);
         assert_eq!(rows[0].min_ts, 1);
         assert_eq!(rows[0].max_ts, 2);
+    }
+
+    // 桌面版配对时，发送范围只包含 Codex，并保留旧厂商的本地记录。
+    #[test]
+    fn local_tool_limits_outgoing_rollup() {
+        let store = SyncStore::open_in_memory("primary-1").unwrap().with_local_tool("codex");
+        store.index().conn().execute_batch(
+            "INSERT INTO event_rollup(day, origin, tool, session, project, model, meter, in_tok, cc_tok, cr_tok, out_tok, reason_tok, credits, n, nonzero, min_ts, max_ts)
+             VALUES('2026-10-01', '', 'codex', 'codex-session', '', '', 'tokens', 5, 0, 0, 0, 0, 0, 1, 1, 1, 2),
+                   ('2026-10-01', '', 'claude', 'older-session', '', '', 'tokens', 50, 0, 0, 0, 0, 0, 1, 1, 1, 4)",
+        ).unwrap();
+        let rows = store.local_rollup_snapshot().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].tool, "codex");
+        assert_eq!(store.local_rollup_fingerprint().unwrap(), (1, 5.0, 2));
+        assert_eq!(store.index().per_tool_counts().unwrap().len(), 2);
     }
 
     #[test]

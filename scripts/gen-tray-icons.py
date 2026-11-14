@@ -32,8 +32,8 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
-SVG = ROOT / "apps" / "tokenme-bar" / "design" / "tray-icon.svg"
-ICON_DIR = ROOT / "apps" / "tokenme-bar" / "src-tauri" / "icons"
+SVG = ROOT / "apps" / "kimo-token-bar" / "design" / "tray-icon.svg"
+ICON_DIR = ROOT / "apps" / "kimo-token-bar" / "src-tauri" / "icons"
 
 SIZES = (16, 20, 24, 28, 32)
 SS = 8  # capture at size*SS, area-average down to size

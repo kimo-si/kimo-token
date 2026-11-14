@@ -55,7 +55,7 @@ fn staging_dir(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!("tokenme-diagnostics-mcp-{}-{label}-{suffix}", std::process::id()))
+    std::env::temp_dir().join(format!("kimo-token-diagnostics-mcp-{}-{label}-{suffix}", std::process::id()))
 }
 
 #[test]

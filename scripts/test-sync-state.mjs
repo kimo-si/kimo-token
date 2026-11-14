@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
-const panelRoot = resolve(root, "apps/tokenme-bar");
+const panelRoot = resolve(root, "apps/kimo-token-bar");
 const frontendPath = resolve(panelRoot, "src/components/SyncSheet.tsx");
 const backendPath = resolve(panelRoot, "src-tauri/src/commands.rs");
 const diagnosticsPath = resolve(panelRoot, "src-tauri/src/diagnostics.rs");
@@ -62,7 +62,7 @@ check("a running primary enters the overview", () => {
 });
 
 check("a stopped primary returns to role selection even with a stale invite", () => {
-  assert.equal(syncScreenFor(snapshot({ role: "primary", service_running: false, invite_url: "tokenme://stale" })), "setup");
+  assert.equal(syncScreenFor(snapshot({ role: "primary", service_running: false, invite_url: "kimo-token://stale" })), "setup");
 });
 
 check("a running secondary enters the overview", () => {
@@ -72,7 +72,7 @@ check("a running secondary enters the overview", () => {
 check("the invite action is data-valid only for a running primary", () => {
   const canInvite = (value) => value.role === "primary" && value.service_running;
   assert.equal(canInvite(snapshot({ role: "primary", service_running: true })), true);
-  assert.equal(canInvite(snapshot({ role: "primary", service_running: false, invite_url: "tokenme://stale" })), false);
+  assert.equal(canInvite(snapshot({ role: "primary", service_running: false, invite_url: "kimo-token://stale" })), false);
   assert.equal(canInvite(snapshot({ role: "secondary", service_running: true })), false);
 });
 
@@ -82,7 +82,7 @@ check("stopping preserves local history but clears primary state", () => {
     primary_id: "primary-1",
     endpoint: "https://192.0.2.1:47821",
     certificate_pin: "a".repeat(64),
-    invite_url: "tokenme://private",
+    invite_url: "kimo-token://private",
     invite_expires_at_ms: 123,
     phase: "success",
     history: { event_count: 42, last_generation: 8 },
@@ -213,7 +213,7 @@ await checkAsync("a local mock peer accepts pairing, status, and disconnect data
     assert.equal(pairing.device_id, "secondary-mock");
 
     const authenticated = {
-      protocol_id: "tokenme-sync-v1",
+      protocol_id: "kimo-token-sync-v1",
       primary_id: "primary-mock",
       device_id: "secondary-mock",
       origin: "local-test",

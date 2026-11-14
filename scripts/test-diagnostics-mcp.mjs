@@ -9,15 +9,15 @@ const design = read("docs/internal/DIAGNOSTICS_MCP_DESIGN_V1.md");
 const audit = read("docs/internal/DIAGNOSTICS_MCP_AUDIT_R1.md");
 const transport = read("crates/usage-device-sync/src/transport.rs");
 const quotaDiagnostics = read("crates/usage-quota/src/diagnostics.rs");
-const commands = read("apps/tokenme-bar/src-tauri/src/commands.rs");
-const bridge = read("apps/tokenme-bar/src/lib/bridge.ts");
-const syncSheet = read("apps/tokenme-bar/src/components/SyncSheet.tsx");
+const commands = read("apps/kimo-token-bar/src-tauri/src/commands.rs");
+const bridge = read("apps/kimo-token-bar/src/lib/bridge.ts");
+const syncSheet = read("apps/kimo-token-bar/src/components/SyncSheet.tsx");
 const production = [
   read("crates/usage-device-sync/src/lib.rs"),
   read("crates/usage-device-sync/src/protocol.rs"),
   transport,
   read("crates/usage-device-sync/src/store.rs"),
-  read("apps/tokenme-bar/src-tauri/src/commands.rs"),
+  read("apps/kimo-token-bar/src-tauri/src/commands.rs"),
   bridge,
   syncSheet,
 ].join("\n");

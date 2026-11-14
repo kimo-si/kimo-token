@@ -139,7 +139,7 @@ impl Watcher {
 
         let stop = Arc::new(AtomicBool::new(false));
         let thread = std::thread::Builder::new()
-            .name("tokenme-watch".into())
+            .name("kimo-token-watch".into())
             .spawn({
                 let state = Arc::clone(&state);
                 let stop = Arc::clone(&stop);

@@ -1,4 +1,4 @@
-//! `tokenme` — cross-tool AI token usage and cost from the tools' own logs.
+//! `kimo-token` — cross-tool AI token usage and cost from the tools' own logs.
 //!
 //! This is the Linux deliverable and the debugging tool for every other surface:
 //! it drives the same incremental index and the same `usage_core::report`
@@ -47,7 +47,7 @@ fn main() {
     // to look one model up would be absurd.
     if let Some(Cmd::Pricing { action: PricingCmd::Explain { ref models } }) = cli.command {
         if models.is_empty() {
-            fail("name at least one model, e.g. `tokenme pricing explain deepseek-v4-flash`");
+            fail("name at least one model, e.g. `kimo-token pricing explain deepseek-v4-flash`");
         }
         let opts = match context::pricing_options(&cli.g) {
             Ok(opts) => opts,
@@ -125,9 +125,9 @@ fn main() {
 }
 
 fn fail(msg: &str) -> ! {
-    eprintln!("tokenme: {msg}");
+    eprintln!("kimo-token: {msg}");
     for panic in context::take_panics() {
-        eprintln!("tokenme: source panicked — {panic}");
+        eprintln!("kimo-token: source panicked — {panic}");
     }
     std::process::exit(1)
 }

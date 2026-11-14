@@ -1,0 +1,276 @@
+mod commands;
+mod diagnostics;
+mod bubble;
+mod lang;
+mod logging;
+mod performance;
+mod engine;
+mod notify;
+mod scan_log;
+mod panel;
+mod servers;
+mod settings;
+mod pet_notice;
+mod claude_otel_config;
+mod claude_otel_ttft;
+mod ttft;
+mod active_speed;
+mod snapshot;
+mod tray;
+mod updater;
+#[cfg(target_os = "windows")]
+mod windows_surface;
+#[cfg(target_os = "windows")]
+mod windows_tray;
+#[cfg(target_os = "windows")]
+mod windows_diagnostics;
+
+pub use settings::{BubbleSkin, Settings, TrayMode};
+
+// 桌面版只注册 Codex，完整厂商实现继续留在工作区中。
+const PANEL_TOOL: &str = "codex";
+
+use std::sync::mpsc::Receiver;
+
+use tauri::Manager;
+
+use crate::engine::EngineChannel;
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    // Start the cold-start clock before anything else can read it.
+    panel::mark_launch();
+    // A non-activating panel never becomes the frontmost app, so App Nap can
+    // throttle the webview while the engine keeps logging. Hold a user-initiated
+    // activity for the process lifetime so the panel stays responsive, while
+    // explicitly allowing the computer to sleep when idle. `id` is a raw
+    // pointer, so retain the returned activity token rather than relying on the
+    // local pointer to keep the Objective-C object alive.
+    #[cfg(target_os = "macos")]
+    let _app_nap_activity = unsafe {
+        use tauri_nspanel::cocoa::base::{id, nil};
+        use tauri_nspanel::cocoa::foundation::NSString;
+        use tauri_nspanel::objc::{class, msg_send, sel, sel_impl};
+        const NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED: u64 = 1 << 20;
+        const NS_ACTIVITY_USER_INITIATED: u64 = 0x00FF_FFFF;
+        let options = NS_ACTIVITY_USER_INITIATED & !NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED;
+
+        let pi: id = msg_send![class!(NSProcessInfo), processInfo];
+        let reason: id = NSString::alloc(nil)
+            .init_str("kimo-token menu-bar panel and desktop pet stay responsive");
+        let activity: id = msg_send![pi,
+            beginActivityWithOptions: options reason: reason];
+        let retained_activity: id = if activity == nil {
+            nil
+        } else {
+            msg_send![activity, retain]
+        };
+        let _: () = msg_send![reason, release];
+        retained_activity
+    };
+    let (tx, rx) = std::sync::mpsc::channel::<engine::Msg>();
+
+    let builder = tauri::Builder::default()
+        // Single-instance hand-off deliberately shows nothing: the panel only
+        // ever appears from a tray click, whose live icon rect anchors it
+        // pixel-centered. A geometry-less show here fell back to the menu
+        // bar's right end — a corner the user got shown on every reinstall.
+        .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .plugin(tauri_plugin_positioner::init())
+        .manage(EngineChannel(tx))
+        .manage(engine::Shared::new(Settings::load()))
+        .manage(commands::SyncControl::default())
+        .manage(diagnostics::DiagnosticsState::default())
+        .manage(servers::state())
+        .manage(pet_notice::NoticeState::default())
+        .invoke_handler(tauri::generate_handler![
+            commands::get_report,
+            commands::get_codex_reset_credits,
+            commands::get_cached_codex_reset_credits,
+            commands::frontend_error,
+            commands::forget_imported_origin,
+            commands::get_tray_state,
+            commands::set_ui_lang,
+            commands::panel_page_signal,
+            commands::set_tray_mode,
+            commands::get_quota_order,
+            commands::set_quota_order,
+            commands::refresh_pricing,
+            commands::tool_icons,
+            commands::get_panel_settings,
+            commands::set_autostart,
+            commands::set_refresh_secs,
+            // commands::checkin_now, // Codex 没有签到入口。
+            commands::set_theme,
+            commands::set_show_money,
+            commands::set_quota_display_mode,
+            commands::set_show_cycle_tokens,
+            commands::get_ttft_snapshot,
+            commands::set_ttft_enabled,
+            commands::set_performance_monitoring,
+            active_speed::run_active_speed_test,
+            commands::set_hide_unused_tools,
+            commands::set_hide_unused_quota,
+            commands::set_hide_unused_estimation,
+            commands::set_report_scope,
+            commands::sync_devices,
+            commands::get_mcp_client_config,
+            diagnostics::set_diagnostics_enabled,
+            diagnostics::get_diagnostics_status,
+            diagnostics::revoke_diagnostics_sessions,
+            diagnostics::diagnostics_session,
+            servers::commands::get_servers,
+            servers::commands::server_public_key,
+            servers::commands::server_probe,
+            servers::commands::server_install,
+            servers::commands::server_abort_session,
+            servers::commands::server_sync_now,
+            servers::commands::server_update,
+            servers::commands::server_remove,
+            updater::check_update,
+            updater::download_update,
+            updater::install_update,
+            updater::get_auto_update_check,
+            updater::set_auto_update_check,
+            commands::set_host_exit_pause,
+            // commands::set_auto_checkin, // 保留其他厂商的签到实现。
+            commands::set_quota_polling,
+            commands::set_notify_device_presence,
+            commands::set_notify_sync_status,
+            commands::set_tool_polling,
+            commands::probe_tools,
+            commands::set_notify_tiers,
+            commands::set_plan_expiry_notify_days,
+            commands::set_tool_muted,
+            commands::set_bubble_enabled,
+            commands::set_bubble_skin,
+            commands::set_pet_preferences,
+            pet_notice::pet_activity,
+            pet_notice::get_pet_notice,
+            pet_notice::show_pet_notice,
+            pet_notice::preview_pet_notice,
+            pet_notice::pet_notice_ready,
+            pet_notice::respond_pet_notice,
+            pet_notice::reposition_pet_notice,
+            notify::notify_status,
+            notify::notify_enable,
+            commands::begin_bubble_drag,
+            commands::show_panel,
+            commands::hide_panel,
+            commands::panel_keyboard,
+            commands::quit_app,
+            commands::open_external,
+            commands::open_log_dir
+        ]);
+
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_nspanel::init());
+
+    builder
+        .setup(move |app| {
+            // Menu-bar only: no Dock tile, no app-switcher entry.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            logging::init();
+            #[cfg(target_os = "windows")]
+            windows_diagnostics::init();
+            if app.state::<engine::Shared>().settings().performance_monitoring {
+                if let Err(error) = performance::set_enabled(true) {
+                    logging::error(&format!("performance: could not start sampler: {error}"));
+                    let shared = app.state::<engine::Shared>();
+                    if let Ok(mut settings) = shared.settings.lock() {
+                        settings.performance_monitoring = false;
+                        if let Err(save_error) = settings.clone().save() {
+                            logging::error(&format!("performance: could not reset failed setting: {save_error}"));
+                        }
+                    };
+                }
+            }
+            notify::init(app.handle());
+            // The check-in ledger rides the panel's own log dir; the probes
+            // themselves call through this hook, so usage-quota stays
+            // host-agnostic.
+            usage_quota::set_checkin_log(std::sync::Arc::new(|msg| crate::logging::checkin(msg)));
+            usage_quota::set_login_expired_note(std::sync::Arc::new(|tool, host| {
+                notify::post_login_expired(tool, host)
+            }));
+            usage_quota::set_claim_note(std::sync::Arc::new(|tool, plan, units| {
+                notify::post_claim(tool, plan, units)
+            }));
+
+            let handle = app.handle().clone();
+            diagnostics::DiagnosticsState::restore_on_launch(&handle);
+            let ttft_dir = usage_core::paths::local_data_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("kimo-token")).join("ttft.json");
+            let ttft_state = ttft::TtftState::new(handle.clone(), ttft_dir, handle.state::<engine::Shared>().settings().ttft_enabled);
+            ttft_state.start();
+            app.manage(ttft_state);
+            tray::build(&handle)?;
+            panel::configure(&handle);
+            // The panel is created hidden (visible: false in tauri.conf.json)
+            // and is only ever revealed through panel::show / panel::toggle, so
+            // setup has nothing to hide: a hide here would bypass
+            // request_visibility and leave the native window and panel_hidden()
+            // telling different stories.
+            bubble::configure(&handle)?;
+            engine_start(handle.clone(), rx);
+            // Restore a user-enabled sync role (an explicit Stop stays
+            // persisted as disabled). The restore snapshot runs on a worker —
+            // it can wait out the ingest engine's index.db write lock — so
+            // this returns immediately and never stalls setup on the main
+            // thread; the recovery loop re-arms it afterwards.
+            commands::restore_sync_on_launch(&handle);
+            servers::hub::start(
+                handle.clone(),
+                handle.state::<std::sync::Arc<servers::ServersState>>().inner().clone(),
+            );
+            tray::reconcile_autostart(&handle);
+            // Screenshots and manual QA need the panel up without a tray click.
+            if std::env::var_os("KIMO_TOKEN_SHOW_PANEL").is_some() {
+                panel::show(&handle, None);
+            }
+            // A one-shot banner for manual QA of the permission flow
+            // (`KIMO_TOKEN_TEST_NOTIFY=1`), posted through the real gate.
+            if std::env::var_os("KIMO_TOKEN_TEST_NOTIFY").is_some() {
+                notify::send_test();
+            }
+            Ok(())
+        })
+        .on_window_event(panel::on_window_event)
+        .on_page_load(|webview, payload| {
+            // `KIMO_TOKEN_PIN_PAGE=tools` deep-links the real panel the way `?page=`
+            // does in a browser — the config window loads index.html bare, and a
+            // non-activating panel takes no synthetic clicks (same QA family as
+            // KIMO_TOKEN_SHOW_PANEL). The guard keeps this navigation's own second
+            // load from looping.
+            if payload.event() != tauri::webview::PageLoadEvent::Finished || webview.label() != "main" {
+                return;
+            }
+            if let Some(p) = std::env::var_os("KIMO_TOKEN_PIN_PAGE") {
+                let _ = webview.eval(&format!(
+                    "if (!location.search) location.replace('index.html?page={}')",
+                    p.to_string_lossy()
+                ));
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("kimo-token failed to start")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) {
+                if let Some(state) = app.try_state::<diagnostics::DiagnosticsState>() {
+                    state.revoke_all();
+                    state.stop_local_http();
+                }
+            }
+        })
+}
+
+fn engine_start(app: tauri::AppHandle, rx: Receiver<engine::Msg>) {
+    let sender = app.state::<EngineChannel>().0.clone();
+    engine::start(app, rx, sender);
+}

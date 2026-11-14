@@ -1,4 +1,4 @@
-# TokenMe 插件平台实施规格 0.5
+# kimo-token 插件平台实施规格 0.5
 
 日期：2026-10-20（Asia/Shanghai）
 开发分支：`codex/plugin-platform`。本文是当前实施入口，覆盖平台开发和插件作者两条工作流。
@@ -14,7 +14,7 @@
 3. [总体方案](PLAN.md)、[日志规范](LOGGING_DIAGNOSTICS.md)、[SDK 设计](LANGUAGE_AND_SDK.md)补充产品边界；有冲突时以上述对应版本合同为准。
 4. `docs/plugin-platform/examples/` 的早期合成清单只用于设计说明，不可替代可执行 schema，也不能拿去安装。
 
-当前参考实现覆盖：配额读取、Token/模型用量、声明式设置/品牌/国际化的静态校验、结构化日志、有界执行、归档完整性、开发沙箱安装及匿名数据汇总。实际 TokenMe UI、通知、真实供应商认证、签到、估算、SQLite、同步和生产升级尚需后续实施票，不从参考测试推导其已经完成。
+当前参考实现覆盖：配额读取、Token/模型用量、声明式设置/品牌/国际化的静态校验、结构化日志、有界执行、归档完整性、开发沙箱安装及匿名数据汇总。实际 kimo-token UI、通知、真实供应商认证、签到、估算、SQLite、同步和生产升级尚需后续实施票，不从参考测试推导其已经完成。
 
 [本轮审计](AUDIT.md)记录实际复现的缺陷、修复与剩余验收门。文档可用于分票开发，不等于生产改造已通过验收。
 
@@ -28,17 +28,17 @@
 | --- | --- |
 | 插件开发语言 | Rust；首批 SDK 和现有适配器迁移以 Rust 为基准 |
 | 编译目标 | `wasm32-wasip2`，产出 Wasm Component |
-| 接口 | WIT `tokenme:plugin/adapter@0.1.0`；参数/结果 JSON 另有结构和语义校验 |
+| 接口 | WIT `kimo-token:plugin/adapter@0.1.0`；参数/结果 JSON 另有结构和语义校验 |
 | 宿主引擎 | Wasmtime，参考版本固定为 49.0.0，不安装 CLI |
 | 绑定 | wit-bindgen 0.63.0；宿主绑定由同一 WIT 生成 |
 | Rust 编译器 | 参考工具链锁定 1.98.1；依赖完整记录在独立 `Cargo.lock` |
 | 开发工具 | 已实现的 Python CLI，Python 3.11+、jsonschema 4.25.1 |
-| 包 | `.tokenme-plugin`，ZIP_STORED，内部包含独立编译的组件和资源 |
+| 包 | `.kimo-token-plugin`，ZIP_STORED，内部包含独立编译的组件和资源 |
 | 首版支持 | Rust；TypeScript 作为后续独立语言适配里程碑，不阻塞这条路线 |
 
 现在不要求实施者再从 Wasm、嵌入式 JS、原生动态库中重新选型。若实测证明该路线达不到上线预算，另写 ADR 说明证据与迁移成本，再修订合同；不得在同一阶段默默维护第二套运行时。
 
-参考采用 Rust 标准库所需的受限 WASI 上下文：不继承环境、标准输入输出或用户目录，不预打开文件目录，关闭 TCP/UDP/DNS。数据访问走 TokenMe 的 WIT 服务。链接 WASI 库不等于授予宿主文件或网络权限。
+参考采用 Rust 标准库所需的受限 WASI 上下文：不继承环境、标准输入输出或用户目录，不预打开文件目录，关闭 TCP/UDP/DNS。数据访问走 kimo-token 的 WIT 服务。链接 WASI 库不等于授予宿主文件或网络权限。
 
 ## 3. 开发者拿到的项目
 
@@ -200,7 +200,7 @@ host.log(event: string, fields-json: string) -> result<(), string>
 | 构建 | `python tools/plugin.py build` | 原生宿主和最终 Wasm Component | 锁定依赖构建成功；输出存在且为组件格式 |
 | 包静态检查 | `pack` 后 `inspect <package>` | 包内容、摘要覆盖、文件类型与资源 | 无路径穿越、重复路径、未覆盖文件或非法资源 |
 | 最终组件 | `python tools/plugin.py verify` | 实际 Wasm 执行、宿主授权、结果、重复、错误/门控/预算 | verification.json passed，逐场景独立证据 |
-| 真实 TokenMe 集成 | 第 12 节 F07/F08 的面板和 CLI 检查 | 注册到实际索引、设置、展示和通知 | 真实应用中安装新 ID 不改主程序，不重复计算 |
+| 真实 kimo-token 集成 | 第 12 节 F07/F08 的面板和 CLI 检查 | 注册到实际索引、设置、展示和通知 | 真实应用中安装新 ID 不改主程序，不重复计算 |
 | 安装/跨平台 | 各平台发行包安装与图形验收 | 内嵌插件、权限、数据保留、性能、真实设备 | 分开记录构建、单机运行和跨设备结论 |
 
 包结构检查不等于执行其字节码；native 测试不等于 Wasm 测试；参考宿主测试不等于桌面应用验收。报告必须保留这三个区别。
@@ -216,7 +216,7 @@ scenarios.json 的精确格式由 schema 定义；断言从固定输入独立核
 ```powershell
 python tools/plugin.py build
 python tools/plugin.py pack
-python tools/plugin.py inspect dist/org.example.tokenme.reference_0.1.0.tokenme-plugin
+python tools/plugin.py inspect dist/org.example.kimo-token.reference_0.1.0.kimo-token-plugin
 ```
 
 包包含且仅包含：manifest、一个组件、声明的图标/语言、LICENSE、build-info、checksums、signature。源码、匿名测试输入、用户日志、第一方凭据和整个 SDK 不进入插件包。
@@ -234,17 +234,17 @@ python tools/plugin.py inspect dist/org.example.tokenme.reference_0.1.0.tokenme-
 
 输出包、整包 `.sha256` 和验证报告一起交付。当前签名状态为 `unsigned-local`，只能进入显式允许的开发沙箱；不能将 SHA-256 一致称作发布者签名已验证。
 
-生产签名票 F02 要固定签名消息为域分隔符 `tokenme.plugin.package/v1`、换行和 checksums 原始字节的 SHA-256 二进制值，使用 Ed25519；信封记录 publisher/key ID、算法、integrity 摘要和 base64 签名。可信密钥来自宿主信任库，不能来自包内自签名的 `official` 字段。该生产格式在 F02 的正反例通过前不加入可接受签名类型。
+生产签名票 F02 要固定签名消息为域分隔符 `kimo-token.plugin.package/v1`、换行和 checksums 原始字节的 SHA-256 二进制值，使用 Ed25519；信封记录 publisher/key ID、算法、integrity 摘要和 base64 签名。可信密钥来自宿主信任库，不能来自包内自签名的 `official` 字段。该生产格式在 F02 的正反例通过前不加入可接受签名类型。
 
 ## 9. 安装、运行、调试和问题定位
 
 ```powershell
-python tools/plugin.py install dist/org.example.tokenme.reference_0.1.0.tokenme-plugin --allow-unsigned-local
-python tools/plugin.py run org.example.tokenme.reference --task collect-usage --repeat 2
-python tools/plugin.py run org.example.tokenme.reference --task read-quota
+python tools/plugin.py install dist/org.example.kimo-token.reference_0.1.0.kimo-token-plugin --allow-unsigned-local
+python tools/plugin.py run org.example.kimo-token.reference --task collect-usage --repeat 2
+python tools/plugin.py run org.example.kimo-token.reference --task read-quota
 ```
 
-当前安装目标固定在参考工程 `sandbox/`，不是用户 TokenMe 目录。按 `<id>/<version>/<package-sha256>` 保存不可变构建，暂存后原子切换 active.json；开发同版本不同构建保留旧摘要目录。生产 registry 对一个已发布版本绑定一个摘要。
+当前安装目标固定在参考工程 `sandbox/`，不是用户 kimo-token 目录。按 `<id>/<version>/<package-sha256>` 保存不可变构建，暂存后原子切换 active.json；开发同版本不同构建保留旧摘要目录。生产 registry 对一个已发布版本绑定一个摘要。
 
 安装器使用已验证的同一份源包字节、每插件独占锁、随机 exclusive 临时文件；拒绝 I/O 路径上的 symlink、Windows reparse point 和文件 hardlink。active 的插件/版本必须匹配包内身份。仅接受规范 ZIP 字节，避免 inspect 通过、安装后重建摘要却失败。该便携开发工具不能保证抵御同一 OS 用户的恶意并发路径替换，生产 F02 使用原生 handle 操作和独立 profile；不能因此把开发沙箱宣称为生产安装器。
 
@@ -254,7 +254,7 @@ python tools/plugin.py run org.example.tokenme.reference --task read-quota
 
 参考宿主对构造与每次调用执行清单 timeoutMs，使用 10ms epoch tick，另有每调用 1000 万 fuel、每个 linear memory 64MiB 上限；这不是整个 Store/进程的内存总上限。Python 对包括编译的整个子进程单独限制 30 秒。epoch/fuel 不替代 native I/O 取消；生产累计 memory/table/instance、JIT/IPC/子进程树预算按 F03 验收。
 
-当前没有伪造 `tokenme-plugin dev` 或 IDE 断点承诺：作者修改后执行 build/verify；fixture runner 就是已可用的开发执行环境。F09 再交付有监督的自动 rebuild/reload、符号映射和健康 UI，且不双跑副作用任务。
+当前没有伪造 `kimo-token-plugin dev` 或 IDE 断点承诺：作者修改后执行 build/verify；fixture runner 就是已可用的开发执行环境。F09 再交付有监督的自动 rebuild/reload、符号映射和健康 UI，且不双跑副作用任务。
 
 ## 10. 可执行参考的验收报告
 
@@ -306,7 +306,7 @@ Get-Content (Join-Path $verificationRecord.artifactDirectory 'read-quota-denied.
 | F06 索引接收 | `usage-index`、动态 SourceAdapter 代理、结果映射 | F01/F04 | 事件+游标同事务，多源/账号/设备去重，累积/修正，旧数据对账；复用旧索引而非一并重写 |
 | F07 设置与展示 | 面板 `commands/bridge/types`、插件元数据 provider、设置和标准视图 | F02/F04/F06 | 实际安装新 ID 后无需加静态表即可显示品牌、设置、用量与今日汇总；语言/主题切换通过 |
 | F08 通知与诊断 | `notify`、`logging/diagnostics`、健康页及只读 CLI/MCP scope | F04/F06/F07 | 请求到展示可定位，静音不补发，失败投递可解释；日志有界、秘密 marker 不导出 |
-| F09 作者工具 | 将参考工具迁为维护的 `tools/tokenme-plugin`；SDK 版本化模板 | F02/F03/F07/F08 | 空目录创建→实际构建→开发 profile 安装→执行→诊断；重建收敛旧任务，不双跑签到 |
+| F09 作者工具 | 将参考工具迁为维护的 `tools/kimo-token-plugin`；SDK 版本化模板 | F02/F03/F07/F08 | 空目录创建→实际构建→开发 profile 安装→执行→诊断；重建收敛旧任务，不双跑签到 |
 | F10 签到/估算/价格 | 落实 v1 能力处理器、SDK 客户端、作者样例、通用接收和设置绑定 | F04/F05/F06 | 签到先查询、结果未知核对、周期/互斥；估算有来源/版本，未计入真实 Token 的重复总和 |
 | F11.1 代表性迁移 | `plugins/official/codex`、`qoder-cn` 及轮换 mock | F05/F07/F08/F10 | 标准事实/报表对账；批准的旧缺陷修正单列；影子不双跑真实写操作 |
 | F11.2 全量迁移 | MIGRATION_INVENTORY.md 每个 tool 及工具外估算/定价/测速/品牌策略 | F11.1 | 每能力来源、配置/游标/缓存映射、最终组件与切换回退留证据；包含 quota-only 工具；适用能力不得空白 |
@@ -334,7 +334,7 @@ F01 以[生产合同](PRODUCTION_CONTRACTS.md)生成以下记录的 schema/绑�
 | 通知 | 事件类型/身份、规则/schema/默认值、全局模板、按应用继承/覆盖、语言键和 action | 有效策略及字段来源、DeliveryDecision 和原因/投递结果；总控优先、恢复继承、不补历史告警；见生产合同 §7.1 |
 | 专属设置/视图 | 稳定键、类型、默认值、scope、受控目标、语言/主题/组件绑定 | 校验后的设置 revision/展示快照；不创建逐工具专属主程序分支 |
 
-每一项的完成定义相同：schema → SDK/绑定 → 授权服务 → 作者样例 → 正反 fixture → 最终组件 → 实际 TokenMe 接入与诊断。缺少任一步，能力不进入正式支持清单。
+每一项的完成定义相同：schema → SDK/绑定 → 授权服务 → 作者样例 → 正反 fixture → 最终组件 → 实际 kimo-token 接入与诊断。缺少任一步，能力不进入正式支持清单。
 
 ## 14. 故障处理与回退
 

@@ -3,7 +3,7 @@ name = "usage-adapter-hermes"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "tokenme source adapter: hermes"
+description = "kimo-token source adapter: hermes"
 
 [dependencies]
 usage-core.workspace = true

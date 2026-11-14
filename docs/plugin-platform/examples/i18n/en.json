@@ -1,6 +1,6 @@
 {
   "tool.name": "Example IDE",
-  "tool.description": "A synthetic example for the TokenMe plugin protocol draft.",
+  "tool.description": "A synthetic example for the kimo-token plugin protocol draft.",
   "settings.usage": "Collect usage",
   "settings.quota": "Read quota",
   "settings.checkin": "Automatic check-in",

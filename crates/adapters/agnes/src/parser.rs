@@ -44,7 +44,7 @@
 //! ## Money: never imported
 //! `cost` and `cost_source` are NULL in **554 / 554** rows: the ledger keeps the
 //! columns and fills in nothing. They are read into the census to prove that a
-//! non-NULL value still changes nothing, and never onto an event — tokenme prices
+//! non-NULL value still changes nothing, and never onto an event — kimo-token prices
 //! every stage centrally from the shared models.dev table.
 //!
 //! ## Ids
@@ -414,7 +414,7 @@ mod tests {
         r.cost = Some(3.75);
         r.cost_source = Some("vendor".to_string());
         let e = event_from_row(&r, "key").unwrap();
-        assert_eq!(e.counts.credits, 0.0, "tokenme prices centrally from models.dev");
+        assert_eq!(e.counts.credits, 0.0, "kimo-token prices centrally from models.dev");
         assert!(flags(&r, &stages(&r)).cost_present, "…but the census still sees that it happened");
     }
 

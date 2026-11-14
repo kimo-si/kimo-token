@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object", "additionalProperties": false, "required": ["schema", "cases"],
   "properties": {
-    "schema": {"const": "tokenme.reference-scenarios/0.1"},
+    "schema": {"const": "kimo-token.reference-scenarios/0.1"},
     "cases": {"type": "array", "minItems": 1, "maxItems": 64, "items": {
       "type": "object", "additionalProperties": false, "required": ["id", "task", "fixture", "exitCode", "assertions"],
       "properties": {

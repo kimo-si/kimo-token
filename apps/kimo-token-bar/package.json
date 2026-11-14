@@ -1,0 +1,36 @@
+{
+  "name": "kimo-token",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "node ../../scripts/check-pet-skins.mjs && tsc --noEmit --incremental --tsBuildInfoFile node_modules/kimo-token.tsbuildinfo && vite build && node ../../scripts/check-pet-bundle.mjs",
+    "preview": "vite preview",
+    "typecheck": "node ../../scripts/check-pet-skins.mjs && tsc --noEmit",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@heroui/react": "^3.2.7",
+    "@heroui/styles": "^3.2.7",
+    "@pixiv/three-vrm": "^3.5.5",
+    "@tauri-apps/api": "^2.1.1",
+    "jsqr": "^1.4.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwind-variants": "^4.0.2",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@tauri-apps/cli": "^2.1.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/three": "^0.186.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3"
+  }
+}

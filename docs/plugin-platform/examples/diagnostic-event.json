@@ -1,5 +1,5 @@
 {
-  "schema_version": "tokenme.plugin-log/v1alpha1",
+  "schema_version": "kimo-token.plugin-log/v1alpha1",
   "timestamp": "2026-10-19T10:00:05.000Z",
   "observed_timestamp": "2026-10-19T10:00:05.010Z",
   "sequence": 42,
@@ -8,7 +8,7 @@
   "event": "http.failed",
   "host_run_id": "example-host-run",
   "runner_id": "example-runner",
-  "plugin_id": "org.example.tokenme.example-ide",
+  "plugin_id": "org.example.kimo-token.example-ide",
   "plugin_version": "0.1.0",
   "module_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "host_version": "0.1.8",

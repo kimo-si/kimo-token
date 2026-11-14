@@ -33,7 +33,7 @@ from pathlib import Path
 
 DEFAULT_CSS = (
     Path(__file__).resolve().parent.parent
-    / "apps/tokenme-bar/src/styles/panel.css"
+    / "apps/kimo-token-bar/src/styles/panel.css"
 )
 
 # `.sec` as its own compound — `.sec-hd` / `.sec-fill` are a section's parts,

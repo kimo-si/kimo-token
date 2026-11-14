@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""?real=1 preview server: serves apps/tokenme-bar/dist plus a LIVE report.json.
+"""?real=1 preview server: serves apps/kimo-token-bar/dist plus a LIVE report.json.
 
 `pnpm dev` + http://127.0.0.1:1420/?real=1 needs the dev backend; this server is
 the no-backend alternative — it serves the built dist/ and answers /report.json
@@ -18,8 +18,8 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DIST = os.path.join(ROOT, "apps", "tokenme-bar", "dist")
-CLI = os.path.join(ROOT, "target", "release", "tokenme")
+DIST = os.path.join(ROOT, "apps", "kimo-token-bar", "dist")
+CLI = os.path.join(ROOT, "target", "release", "kimo-token")
 CACHE_TTL = 20.0
 
 _cache = {"at": 0.0, "body": b""}

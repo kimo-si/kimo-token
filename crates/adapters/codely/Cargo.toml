@@ -3,7 +3,7 @@ name = "usage-adapter-codely"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "tokenme source adapter: Tuanjie Codely / Cowork"
+description = "kimo-token source adapter: Tuanjie Codely / Cowork"
 
 [dependencies]
 usage-core.workspace = true

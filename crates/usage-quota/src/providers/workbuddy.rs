@@ -18,7 +18,7 @@
 //! itself proxies the meter call with its own login state, so a stock install
 //! needs no credential work at all (see `workbuddy_wbipc`) — then explicit
 //! tokens: the desktop app's auth file (`WORKBUDDY_AUTH_FILE` overrides), then
-//! a bare pasted token (`WORKBUDDY_TOKEN` or `tokenme/workbuddy.token`) —
+//! a bare pasted token (`WORKBUDDY_TOKEN` or `kimo-token/workbuddy.token`) —
 //! current app versions encrypt that file's accessToken in place; the matching
 //! installed runtime opens it through its native storage binding, without
 //! modifying the desktop login. A pasted token remains an optional fallback.
@@ -90,7 +90,7 @@ fn read_auth() -> Option<Value> {
 /// at-rest scheme whose key never touches disk in extractable form, so the
 /// app's own file yields no token on current versions. The account token is
 /// long-lived (about a year), so pasting it once into `WORKBUDDY_TOKEN` or a
-/// one-line `tokenme/workbuddy.token` file keeps the probe fed until expiry.
+/// one-line `kimo-token/workbuddy.token` file keeps the probe fed until expiry.
 fn bare_token() -> Option<String> {
     if let Some(raw) = std::env::var_os("WORKBUDDY_TOKEN") {
         let t = raw.to_string_lossy().trim().to_string();
@@ -98,7 +98,7 @@ fn bare_token() -> Option<String> {
             return Some(t);
         }
     }
-    let path = dirs::config_dir()?.join("tokenme").join("workbuddy.token");
+    let path = usage_core::paths::config_dir()?.join("workbuddy.token");
     let t = std::fs::read_to_string(path).ok()?;
     let t = t.trim().to_string();
     if t.is_empty() { None } else { Some(t) }
@@ -120,7 +120,7 @@ const LOGIN_BASE: &str = "https://copilot.tencent.com";
 const LOGIN_UA: &str = "CLI/2.63.2 CodeBuddy/2.63.2";
 
 fn saved_login_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("tokenme").join("workbuddy-auth.json"))
+    usage_core::paths::config_dir().map(|d| d.join("workbuddy-auth.json"))
 }
 
 /// The credential saved by [`login`]: a JSON mirror of the auth file's `auth`

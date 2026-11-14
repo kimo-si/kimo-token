@@ -1,7 +1,7 @@
 //! Executable alpha contract. This crate is a reference, not the published SDK.
 use serde::{Deserialize, Serialize};
 
-pub const HOST_API: &str = "tokenme.plugin/0.1";
+pub const HOST_API: &str = "kimo-token.plugin/0.1";
 pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 pub const MAX_BATCH: usize = 1000;
 

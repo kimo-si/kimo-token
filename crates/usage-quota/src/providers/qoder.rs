@@ -125,20 +125,11 @@ impl QuotaProbe for QoderQuota {
         "qoder"
     }
 
-    /// The daily check-in rides this probe and must run even while the host
-    /// gate pauses the live read: the claim is a vendor-side state change, not
-    /// a number to freeze (2026-10-11: Qoder closed all morning, the day's
-    /// check-in never ran).
-    fn daily_task(&self) -> bool {
-        true
-    }
-
     fn fetch(&self) -> Vec<QuotaSample> { fetch_for(Edition::Global) }
 }
 
 impl QuotaProbe for QoderCnQuota {
     fn tool(&self) -> &'static str { "qoder_cn" }
-    fn daily_task(&self) -> bool { true }
     fn fetch(&self) -> Vec<QuotaSample> { fetch_for(Edition::China) }
 }
 
@@ -532,7 +523,7 @@ pub(crate) fn samples_from_snapshot(value: &Value) -> Vec<QuotaSample> {
 // the day is read as closed or empty. Without the app on disk the claim
 // falls back to the bare request, and that refusal reads as `claim_gated` —
 // only it: a 200-BLOCKED row keeps retrying, because measured retries win.
-// So tokenme reports the state honestly: CLAIMED rows mark the day 已签到,
+// So kimo-token reports the state honestly: CLAIMED rows mark the day 已签到,
 // a claimable row the device gate refuses sets `claim_gated` (marker row +
 // button label point at the client; recorded for the day so the auto pass
 // stops re-POSTing the refused request), an empty list is `no_campaign`
@@ -595,7 +586,7 @@ struct QoderCheckinOutcome {
 }
 
 fn checkin_state_path_for(edition: Edition) -> Option<std::path::PathBuf> {
-    dirs::config_dir().map(|d| d.join("tokenme").join("quota").join(format!("{}_checkin.json", edition.tool())))
+    usage_core::paths::config_dir().map(|d| d.join("quota").join(format!("{}_checkin.json", edition.tool())))
 }
 
 fn account_key(info: &Value) -> Option<String> {
@@ -737,7 +728,7 @@ fn checkin_campaigns(base: &str, token: &str, ident: Option<&QoderClaimIdentity>
 /// from the UMID security SDK's native bridge the app ships
 /// (`resources/umid/runtime-info`, the Alibaba device-identity half). The
 /// server's `SAME_PERSON` check refuses everything without this set — forged
-/// values included (measured 2026-10-09) — so tokenme runs the app's own
+/// values included (measured 2026-10-09) — so kimo-token runs the app's own
 /// bridge instead of imitating it (cross-checked against the open-source
 /// claimers: mmqz/cpa-multi-plugins, shuishuipingan/qoder2api-hub,
 /// HUIdada1/AgentHub, yetone/magpie).
@@ -959,13 +950,13 @@ fn umid_candidates() -> Vec<std::path::PathBuf> {
     Vec::new()
 }
 
-/// The app's own bridge binary; `TOKENME_QODER_UMID_BIN` overrides discovery
+/// The app's own bridge binary; `KIMO_TOKEN_QODER_UMID_BIN` overrides discovery
 /// (tests), and a missing app just means no identity — never a mock one.
 #[cfg(test)]
 fn umid_binary() -> Option<std::path::PathBuf> { umid_binary_for(Edition::Global) }
 
 fn umid_binary_for(edition: Edition) -> Option<std::path::PathBuf> {
-    if let Some(p) = std::env::var_os(if edition == Edition::China { "TOKENME_QODER_CN_UMID_BIN" } else { "TOKENME_QODER_UMID_BIN" }).map(std::path::PathBuf::from) {
+    if let Some(p) = std::env::var_os(if edition == Edition::China { "KIMO_TOKEN_QODER_CN_UMID_BIN" } else { "KIMO_TOKEN_QODER_UMID_BIN" }).map(std::path::PathBuf::from) {
         return p.is_file().then_some(p);
     }
     umid_candidates().into_iter().filter(|p| {
@@ -1744,7 +1735,7 @@ mod tests {
         assert!(cands.len() >= 2, "the per-user Applications folder is a candidate too");
     }
 
-    /// A `TOKENME_QODER_UMID_BIN` override is a file check, not a fallback
+    /// A `KIMO_TOKEN_QODER_UMID_BIN` override is a file check, not a fallback
     /// seed: a broken override must mint nothing instead of quietly running
     /// whatever the disk happens to hold.
     #[test]
@@ -1752,11 +1743,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let fake = dir.path().join("runtime-info");
         std::fs::write(&fake, b"#!/bin/sh\n").unwrap();
-        std::env::set_var("TOKENME_QODER_UMID_BIN", &fake);
+        std::env::set_var("KIMO_TOKEN_QODER_UMID_BIN", &fake);
         assert_eq!(umid_binary().as_deref(), Some(fake.as_path()));
-        std::env::set_var("TOKENME_QODER_UMID_BIN", dir.path().join("missing"));
+        std::env::set_var("KIMO_TOKEN_QODER_UMID_BIN", dir.path().join("missing"));
         assert_eq!(umid_binary(), None, "a broken override must not fall through to discovery");
-        std::env::remove_var("TOKENME_QODER_UMID_BIN");
+        std::env::remove_var("KIMO_TOKEN_QODER_UMID_BIN");
     }
 
     /// The response measured live on this machine (2026-09-24, `personal_standard`):
@@ -1908,7 +1899,7 @@ mod tests {
     #[test]
     fn the_desktop_app_record_round_trips_through_its_own_file() {
         use cbc::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
-        let pass = "tokenme-test-passphrase";
+        let pass = "kimo-token-test-passphrase";
         let body = r#"{"schemaVersion":1,"token":"fixture","expiresAt":"2026-10-20T00:29:25Z"}"#;
         let mut key = [0u8; 16];
         pbkdf2::pbkdf2_hmac::<sha1::Sha1>(pass.as_bytes(), b"saltysalt", 1003, &mut key);
@@ -1933,7 +1924,7 @@ mod tests {
     #[test]
     fn the_envelope_is_symmetric() {
         use cbc::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
-        let pass = "tokenme-test-passphrase";
+        let pass = "kimo-token-test-passphrase";
         let body = r#"{"userQuota":{"total":10,"used":4,"unit":"credits"}}"#;
         let mut key = [0u8; 16];
         pbkdf2::pbkdf2_hmac::<sha1::Sha1>(pass.as_bytes(), b"saltysalt", 1003, &mut key);

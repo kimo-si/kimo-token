@@ -4,10 +4,10 @@ param(
     [string]$InstallDirectory = ''
 )
 $ErrorActionPreference = 'Stop'
-$dumpFolder = '%LOCALAPPDATA%\tokenme\crashes'
-$ownerValue = 'TokenMeManagedCrashDumps'
+$dumpFolder = '%LOCALAPPDATA%\kimo-token\crashes'
+$ownerValue = 'kimoTokenManagedCrashDumps'
 
-function Set-TokenMeDumpPolicy([Microsoft.Win32.RegistryKey]$Parent, [string]$Image, [string]$Action) {
+function Set-kimoTokenDumpPolicy([Microsoft.Win32.RegistryKey]$Parent, [string]$Image, [string]$Action) {
     $key = $Parent.OpenSubKey($Image, $Action -ne 'Status')
     try {
         if ($Action -eq 'Enable') {
@@ -55,18 +55,18 @@ try {
                 # The two installer modes can coexist on older machines. Leave
                 # their shared image policy while the other installation exists.
                 foreach ($hive in @($machine, [Microsoft.Win32.Registry]::CurrentUser)) {
-                    $other = $hive.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Uninstall\TokenMe')
+                    $other = $hive.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Uninstall\kimo-token')
                     if ($other) {
                         try {
                             $location = ([string]$other.GetValue('InstallLocation', '')).Trim('"').TrimEnd('\')
-                            if ($location -and $location -ine $InstallDirectory.TrimEnd('\') -and (Test-Path -LiteralPath (Join-Path $location 'TokenMe.exe'))) {
+                            if ($location -and $location -ine $InstallDirectory.TrimEnd('\') -and (Test-Path -LiteralPath (Join-Path $location 'kimo-token.exe'))) {
                                 @{ status = 'other_installation_present' } | ConvertTo-Json -Compress; exit 0
                             }
                         } finally { $other.Dispose() }
                     }
                 }
             }
-            @('TokenMe.exe', 'TokenMe-diagnostic.exe') | ForEach-Object { Set-TokenMeDumpPolicy $parent $_ $Mode } | ConvertTo-Json -Compress
+            @('kimo-token.exe', 'kimo-token-diagnostic.exe') | ForEach-Object { Set-kimoTokenDumpPolicy $parent $_ $Mode } | ConvertTo-Json -Compress
         } finally { $parent.Dispose() }
     } finally { $machine.Dispose() }
     exit 0

@@ -46,6 +46,7 @@ pub use cline::ClineQuota;
 pub use codely::CodelyQuota;
 pub use cola::ColaQuota;
 pub use codex::CodexQuota;
+pub use codex::{cached_codex_reset_credits, codex_reset_credits, CodexResetCredit, CodexResetCredits};
 pub use copilot::CopilotQuota;
 pub use dsh::DshQuota;
 pub use funide::FunIdeQuota;

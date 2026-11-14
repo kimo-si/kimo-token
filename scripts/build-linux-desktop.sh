@@ -15,14 +15,14 @@ done
 pkg-config --exists gtk+-3.0 webkit2gtk-4.1 ayatana-appindicator3-0.1
 python3 scripts/check-theme-parity.py
 python3 scripts/check-i18n-parity.py
-if [[ ! -s apps/tokenme-bar/src-tauri/resources/collector/tokenme-x86_64 || ! -s apps/tokenme-bar/src-tauri/resources/collector/tokenme-aarch64 ]]; then
+if [[ ! -s apps/kimo-token-bar/src-tauri/resources/collector/kimo-token-x86_64 || ! -s apps/kimo-token-bar/src-tauri/resources/collector/kimo-token-aarch64 ]]; then
   bash scripts/bundle-collector.sh
 fi
 if [[ "$FAST" == 0 ]]; then
   cargo test --workspace --locked
-  (cd apps/tokenme-bar/src-tauri && cargo test --locked)
+  (cd apps/kimo-token-bar/src-tauri && cargo test --locked)
 fi
-cd apps/tokenme-bar
+cd apps/kimo-token-bar
 pnpm install --frozen-lockfile
 pnpm tauri build --bundles deb
 sha256sum src-tauri/target/release/bundle/deb/*.deb

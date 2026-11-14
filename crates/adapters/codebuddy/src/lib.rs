@@ -6,7 +6,7 @@
 //! message. The turn's final assistant message carries `extra.statsSnapshot`:
 //! that turn's token stages plus `credit`, the vendor's own billing unit, so
 //! this tool meters like its sibling WorkBuddy — [`Meter::Tokens`] events with
-//! a credit riding along, priced centrally by tokenme. The transcript bodies
+//! a credit riding along, priced centrally by kimo-token. The transcript bodies
 //! themselves stay server-side; only the usage snapshots land here, which is
 //! all the index needs.
 //!

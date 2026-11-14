@@ -54,7 +54,7 @@ revision 针对同一来源/epoch/occurrence 的 contribution，不是多个来�
 4. 同 contribution 较低 revision 记 stale/no-op；同 revision 同标准 payload 记 duplicate；同 revision 不同 payload 返回 DATA.REVISION_CONFLICT、整批回滚。更高 revision 才能修正；final→partial 返回 DATA.FINAL_REGRESSION。
 5. 按字段优先级合成 occurrence。优先级同级出现不同非空数据时，将该字段标 conflict 并从当前合计排除，保留原贡献和冲突原因；不能任选先到/后到者，也不把未知显示成 0。已汇总值被冲突撤出时同事务修复 rollup，UI 标明 coverage/conflict。
 
-payload 摘要使用生产 API 的规范编码：UTF-8 无 BOM、对象 key 按 Unicode code point 排序、紧凑 JSON、数组保序、所有可空字段显式 null；Decimal 不改写其合法字符串。摘要消息为 tokenme.usage-batch/v1、LF、规范 header/facts/retractions 字节；trace/耗时等非业务诊断字段不入摘要。F01 提交编码的跨语言黄金字节，不能各自使用本地序列化默认值。
+payload 摘要使用生产 API 的规范编码：UTF-8 无 BOM、对象 key 按 Unicode code point 排序、紧凑 JSON、数组保序、所有可空字段显式 null；Decimal 不改写其合法字符串。摘要消息为 kimo-token.usage-batch/v1、LF、规范 header/facts/retractions 字节；trace/耗时等非业务诊断字段不入摘要。F01 提交编码的跨语言黄金字节，不能各自使用本地序列化默认值。
 
 usage.collect 输出增加 retractions 数组：每项为 `{identity_domain, occurrence_id, session_ref, target_revision}`，只撤回当前 source/epoch 自己的 contribution，target_revision 必须匹配，不能撤回别的来源/账号。facts+retractions 总计≤1000，同批次重复/相互冲突目标拒绝。来源轮转/截断的批量撤回仍由宿主来源状态机生成。
 
@@ -80,7 +80,7 @@ sampled_at≤valid_until，宿主实际 effective_valid_until=min(valid_until,sa
 
 TaskContext 分开记录 settings_snapshot_revision（本次配置快照）与 execution_revision（只由影响本任务 parser_config/task_gate/resource 的字段产生）。FactReceiver 只按 execution_revision、grants/generation/lease 失效判断。通知单独使用 notification_policy_revision，主题/语言使用 presentation_revision。修改阈值、通知方式、文案或主题，不令合法采集批次失效，不推进/重置采集游标，也不清配额缓存。
 
-插件只能登记自己命名空间的配置；scope=global 表示该插件自己跨应用的设置，不获得写 TokenMe 全局配置的权利。tokenme.* 保留给宿主；公共通知模板由宿主按 standard policy schema 提供，不能由任意插件抢占。tool scope 目标必须属于该插件获准的 tool_ref。
+插件只能登记自己命名空间的配置；scope=global 表示该插件自己跨应用的设置，不获得写 kimo-token 全局配置的权利。kimo-token.* 保留给宿主；公共通知模板由宿主按 standard policy schema 提供，不能由任意插件抢占。tool scope 目标必须属于该插件获准的 tool_ref。
 
 全局/应用的稀疏覆盖与总控规则延续生产合同 §7.1。通知配置保存采用对应记录 expected_revision 的 CAS；冲突返回 SETTINGS.REVISION_CONFLICT，不整体覆盖全局快照。仅有效字段变化才增加对应策略版本。全局更新后，有效值没变的应用（相应字段已覆盖）不重建观察基线；仅 channels/cooldown 变化也不清阈值历史。阈值/enable 变化才按现有数据无投递地建立新基线。
 

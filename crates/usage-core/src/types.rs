@@ -177,7 +177,7 @@ pub fn origin_of(source: &str) -> &str {
 /// Whether `name` can be used as a sync origin. Deliberately narrow: `:`
 /// separates origin from key inside `linux:<origin>:<key>` sources and dedupe
 /// keys (and would break [`origin_of`] and its SQL twin), `/` and `\` would
-/// turn `tokenme-<origin>.jsonl.gz` into a path, and control characters would
+/// turn `kimo-token-<origin>.jsonl.gz` into a path, and control characters would
 /// corrupt manifests and log lines. Everything a hostname can contain, and
 /// anything a person would type into the panel's server dialog, still passes.
 pub fn origin_ok(name: &str) -> bool {

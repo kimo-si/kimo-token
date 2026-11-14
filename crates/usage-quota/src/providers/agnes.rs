@@ -26,7 +26,7 @@
 //! token up on its next pass with zero further work.
 //!
 //! What the probe ships today: a pasted token (`AGNES_TOKEN` env or
-//! `tokenme/agnes.token`) is the working source; the keychain `agnes` entry is
+//! `kimo-token/agnes.token`) is the working source; the keychain `agnes` entry is
 //! also tried and parsed for an `AGNES_AI_API_KEY` for when the vendor accepts
 //! the model key on this endpoint. No token at all answers an empty vec; the
 //! user's own bars are never blanked by a probe.
@@ -79,8 +79,8 @@ fn token() -> Option<String> {
             return Some(t);
         }
     }
-    if let Some(dir) = dirs::config_dir() {
-        let path = dir.join("tokenme").join("agnes.token");
+    if let Some(dir) = usage_core::paths::config_dir() {
+        let path = dir.join("agnes.token");
         if let Ok(t) = std::fs::read_to_string(path) {
             let t = t.trim().to_string();
             if !t.is_empty() {
@@ -210,7 +210,7 @@ mod tests {
         std::env::remove_var("AGNES_TOKEN");
         // The paste file is the next leg; the keychain leg after it asks for a
         // one-time macOS approval, so tests never walk that far.
-        let paste = dirs::config_dir().map(|d| d.join("tokenme").join("agnes.token"));
+        let paste = usage_core::paths::config_dir().map(|d| d.join("agnes.token"));
         if let Some(paste) = paste {
             if let Some(parent) = paste.parent() {
                 let _ = std::fs::create_dir_all(parent);

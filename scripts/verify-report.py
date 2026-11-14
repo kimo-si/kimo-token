@@ -2,7 +2,7 @@
 """Second verification layer: index → report.
 
 `verify-totals.py` proves the raw files were read correctly. This proves the
-aggregation on top of them: every number in `tokenme report --json` is recomputed
+aggregation on top of them: every number in `kimo-token report --json` is recomputed
 from the SQLite index with independent SQL/Python, including the money, which is
 priced here from the cached models.dev payload rather than from the Rust table.
 
@@ -43,9 +43,9 @@ def platform_dirs():
 
 
 DATA_DIR, CACHE_DIR, CONFIG_DIR = platform_dirs()
-DB = os.path.join(DATA_DIR, "tokenme", "index.db")
-PRICES = os.path.join(CACHE_DIR, "tokenme", "models.dev.json")
-SETTINGS = os.path.join(CONFIG_DIR, "tokenme", "settings.json")
+DB = os.path.join(DATA_DIR, "kimo-token", "index.db")
+PRICES = os.path.join(CACHE_DIR, "kimo-token", "models.dev.json")
+SETTINGS = os.path.join(CONFIG_DIR, "kimo-token", "settings.json")
 # docs.qoder.com/zh/account/pricing: Pro $20/2000, Pro+ $60/6000, Ultra $200/20000.
 CREDIT_USD = {"qoder": 0.01}
 FIELDS = ["input", "cache_creation", "cache_read", "output", "reasoning", "credits"]
@@ -148,7 +148,7 @@ def main():
     db = DB
     frozen = None
     if args.freeze:
-        with tempfile.NamedTemporaryFile(prefix="tokenme-frozen-", suffix=".db", delete=False) as handle:
+        with tempfile.NamedTemporaryFile(prefix="kimo-token-frozen-", suffix=".db", delete=False) as handle:
             frozen = handle.name
         src = sqlite3.connect(DB)
         dst = sqlite3.connect(frozen)
@@ -183,7 +183,7 @@ def main():
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "target",
             "release",
-            "tokenme.exe" if os.name == "nt" else "tokenme",
+            "kimo-token.exe" if os.name == "nt" else "kimo-token",
         )
         # `--no-ingest` so the report reads the very snapshot we just took instead of
         # advancing the index underneath us.

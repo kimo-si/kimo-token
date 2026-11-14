@@ -1,4 +1,4 @@
-# TokenMe plugin reference kit 0.1
+# kimo-token plugin reference kit 0.1
 
 A runnable Rust → Wasm component → validated package → isolated local install →
 offline host execution workflow. This is a reference implementation for the
@@ -8,7 +8,7 @@ Implemented capabilities: `quota.read` and `usage.collect`. The host serves
 synthetic fixtures, enforces the manifest's task/resource grants, validates
 results, deduplicates usage, produces a model summary, and writes metadata-only
 diagnostic events. It does not contact a vendor, load real credentials, install
-into TokenMe, or implement the production scheduler/UI/notification bridge.
+into kimo-token, or implement the production scheduler/UI/notification bridge.
 
 ## Toolchain
 
@@ -112,8 +112,8 @@ artifacts/runs/<runId>/read-quota-malformed.json     PARSE.SCHEMA_MISMATCH
 artifacts/runs/<runId>/read-quota-disabled.json      gated; no http.begin in its JSONL
 artifacts/runs/<runId>/read-quota-fuel.json          RUNTIME.BUDGET_EXCEEDED
 artifacts/runs/<runId>/collect-usage-unseen-id.json  new ID; unchanged host
-dist/org.example.tokenme.reference_0.1.0.tokenme-plugin
-dist/org.example.tokenme.reference_0.1.0.tokenme-plugin.sha256
+dist/org.example.kimo-token.reference_0.1.0.kimo-token-plugin
+dist/org.example.kimo-token.reference_0.1.0.kimo-token-plugin.sha256
 ```
 
 Each scenario has a separate JSON report and JSONL trace. Native unit tests
@@ -131,10 +131,10 @@ python tools/plugin.py check
 python tools/plugin.py test
 python tools/plugin.py build
 python tools/plugin.py pack
-python tools/plugin.py inspect dist/org.example.tokenme.reference_0.1.0.tokenme-plugin
-python tools/plugin.py install dist/org.example.tokenme.reference_0.1.0.tokenme-plugin --allow-unsigned-local
-python tools/plugin.py run org.example.tokenme.reference --task collect-usage --repeat 2
-python tools/plugin.py run org.example.tokenme.reference --task read-quota
+python tools/plugin.py inspect dist/org.example.kimo-token.reference_0.1.0.kimo-token-plugin
+python tools/plugin.py install dist/org.example.kimo-token.reference_0.1.0.kimo-token-plugin --allow-unsigned-local
+python tools/plugin.py run org.example.kimo-token.reference --task collect-usage --repeat 2
+python tools/plugin.py run org.example.kimo-token.reference --task read-quota
 ```
 
 `check` validates schema, links, permissions, task/settings references, locale
@@ -170,7 +170,7 @@ values. The tool has no fixed tool ID, task name or Token/quota expectation.
 
 ## Package format and install semantics
 
-The `.tokenme-plugin` is a ZIP_STORED archive with sorted canonical paths, fixed
+The `.kimo-token-plugin` is a ZIP_STORED archive with sorted canonical paths, fixed
 timestamps and regular files only. Its exact contents are:
 
 ```text

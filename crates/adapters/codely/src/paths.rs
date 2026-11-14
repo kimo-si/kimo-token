@@ -6,7 +6,7 @@
 //! appended by rewriting the whole object, and the file is the only place the
 //! per-call `tokens` object is written down.
 //!
-//! `CODELY_CLI_HOME` is tokenme's override, following the same pattern as the
+//! `CODELY_CLI_HOME` is kimo-token's override, following the same pattern as the
 //! other adapters: a test or a relocated install pins the root. The vendor's
 //! own environment variable is not documented, so the default is the product's
 //! real home.

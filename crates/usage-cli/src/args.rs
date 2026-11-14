@@ -1,4 +1,4 @@
-//! clap surface for `tokenme`.
+//! clap surface for `kimo-token`.
 
 use std::path::PathBuf;
 
@@ -6,9 +6,9 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "tokenme",
+    name = "kimo-token",
     about = "AI token usage and cost, straight from the tools' own logs",
-    long_about = "tokenme reads Claude Code, Codex and OpenCode logs incrementally into a local \
+    long_about = "kimo-token reads Claude Code, Codex and OpenCode logs incrementally into a local \
                   SQLite index and renders cost/token reports from it.\n\n\
                   Money and period math lives in usage-core, so this CLI and the menu-bar panel \
                   can never disagree about a number.",
@@ -130,7 +130,7 @@ pub enum Cmd {
         action: PricingCmd,
     },
 
-    /// Spend caps tokenme measures against its own cost, for the tools whose
+    /// Spend caps kimo-token measures against its own cost, for the tools whose
     /// vendor publishes no limit (Cline, ZCode, …)
     Budget {
         #[command(subcommand)]
@@ -161,14 +161,14 @@ pub enum Cmd {
         #[arg(long)]
         status: bool,
 
-        /// Take the ingest lease even if another tokenme process holds it
+        /// Take the ingest lease even if another kimo-token process holds it
         #[arg(long)]
         force: bool,
     },
 
     /// Export a window of this machine's events as a sync bundle (JSONL.gz +
     /// manifest) for another machine to import. Ingests first, then writes to
-    /// `~/tokenme-sync` by default, which is where the menu-bar engine picks
+    /// `~/kimo-token-sync` by default, which is where the menu-bar engine picks
     /// bundles up. A quiet or logless machine still ships a valid (empty)
     /// bundle — a collector's timer must never fail on a slow day.
     Export {
@@ -176,7 +176,7 @@ pub enum Cmd {
         #[arg(long, value_name = "N", default_value_t = 30)]
         days: i64,
 
-        /// Directory the bundle lands in (default: ~/tokenme-sync)
+        /// Directory the bundle lands in (default: ~/kimo-token-sync)
         #[arg(long, value_name = "DIR")]
         out: Option<PathBuf>,
 
@@ -188,7 +188,7 @@ pub enum Cmd {
 
     /// Merge one sync bundle exported by another machine into the local index
     Import {
-        /// The tokenme-*.jsonl.gz to merge; its manifest must sit next to it
+        /// The kimo-token-*.jsonl.gz to merge; its manifest must sit next to it
         file: PathBuf,
 
         /// Parse, merge and reconcile, then roll back without committing
@@ -241,7 +241,7 @@ pub enum SyncCmd {
 
     /// Submit a pairing request to the primary using an invite secret.
     Pair {
-        /// A complete tokenme://device-pair invite. This is the preferred
+        /// A complete kimo-token://device-pair invite. This is the preferred
         /// path; it persists the endpoint, pin, identity and primary binding.
         #[arg(long, value_name = "URL")]
         invite: Option<String>,

@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/tokenme-bar
+        working-directory: apps/kimo-token-bar
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -31,6 +31,6 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: apps/tokenme-bar/pnpm-lock.yaml
+          cache-dependency-path: apps/kimo-token-bar/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm build

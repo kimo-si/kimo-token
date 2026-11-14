@@ -144,7 +144,7 @@ pub struct PricingOptions {
 
 impl PricingOptions {
     pub fn default_cache_dir() -> Option<PathBuf> {
-        dirs::cache_dir().map(|d| d.join("tokenme"))
+        crate::paths::cache_dir()
     }
 }
 

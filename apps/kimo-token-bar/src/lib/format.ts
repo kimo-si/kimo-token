@@ -1,0 +1,369 @@
+import type { PeriodKey, TokenCounts, TrayMode } from "../types";
+import { lang, t } from "./i18n";
+
+const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Fixed categorical ramp; index order is the order tools appear. */
+const TOOL_ORDER = [
+  "claude",
+  "codex",
+  "opencode",
+  "pi",
+  "cline",
+  "zcode",
+  "qoder",
+  "antigravity",
+  "hermes",
+  "funide",
+  "agnes",
+  "atomcode",
+  "workbuddy",
+  "workbuddy_cn",
+  "codebuddy",
+  "crow5",
+  "mimocode",
+  "cola",
+  "catpaw",
+  "dsh",
+  "joycode",
+  "trae",
+  "trae_cn",
+  "kimicode",
+  "minimaxcode",
+  "omp",
+  // The IDE install is its own tool; it joins at the end so no existing
+  // tool's color slot moves.
+  "antigravity_ide",
+  // Codely CLI and the Tuanjie Cowork desktop share one store — one tool row.
+  "codely",
+  "opendesign",
+
+];
+
+const DISPLAY: Record<string, string> = {
+  joycode: "JoyCode",
+  claude: "Claude Code",
+  codex: "Codex",
+  opencode: "OpenCode",
+  pi: "Pi",
+  cline: "Cline",
+  zcode: "ZCode",
+  codebuddy: "CodeBuddy",
+  qoder: "Qoder",
+  qoder_cn: "Qoder CN",
+  antigravity: "Antigravity",
+  antigravity_ide: "Antigravity IDE",
+  hermes: "Hermes",
+  funide: "FunIDE",
+  agnes: "AgnesCode",
+  atomcode: "AtomCode",
+  workbuddy: "WorkBuddy AI",
+  workbuddy_cn: "WorkBuddy",
+  crow5: "Crow5",
+  mimocode: "Mimocode",
+  // 妙手 — the product's own current name (the engine's displays map wins
+  // when a report is loaded; this is the pre-report fallback).
+  catpaw: "妙手",
+  dsh: "DSH",
+  cola: "Cola",
+  trae: "Trae",
+  trae_cn: "Trae CN",
+  kimicode: "Kimi Code",
+  minimaxcode: "MiniMax Code",
+  omp: "Oh My Pi",
+  codely: "Codely",
+  opendesign: "Open Design",
+  gemini: "Gemini CLI",
+  cursor: "Cursor",
+};
+
+export function toolDisplay(id: string): string {
+  return DISPLAY[id] ?? id.charAt(0).toUpperCase() + id.slice(1);
+}
+
+/** Colour is assigned by id, never by rank, so a tool keeps its colour across periods. */
+export function toolSlot(id: string): number {
+  const exact = TOOL_ORDER.indexOf(id === "qoder_cn" ? "qoder" : id);
+  if (exact >= 0) return exact;
+  let hash = 0;
+  for (const ch of id) hash = (hash * 31 + ch.charCodeAt(0)) % 997;
+  return hash % TOOL_ORDER.length;
+}
+
+export function toolColor(id: string): string {
+  return `var(--cat-${toolSlot(id) + 1})`;
+}
+
+/** 14.02M / 842.4K / 96 — the unit is a separate node so it can be styled smaller. */
+export function splitTokens(n: number): { value: string; unit: string } {
+  const abs = Math.abs(n);
+  if (abs >= 1e9) return { value: (n / 1e9).toFixed(2), unit: "B" };
+  if (abs >= 1e6) return { value: (n / 1e6).toFixed(2), unit: "M" };
+  if (abs >= 1e4) return { value: (n / 1e3).toFixed(1), unit: "K" };
+  return { value: Math.round(n).toLocaleString("en-US"), unit: "" };
+}
+
+const TOKENS_PER_YI = 100_000_000;
+const TOKENS_PER_MILLION = 1_000_000;
+
+// 总用量统一保留两位小数，动画中使用最终读数决定的单位。
+export function formatOverviewTokens(n: number, unitReference = n): { value: string; unit: "M" | "亿" } {
+  const inYi = Math.abs(unitReference) >= TOKENS_PER_YI;
+  const scale = inYi ? TOKENS_PER_YI : TOKENS_PER_MILLION;
+  return { value: (n / scale).toFixed(2), unit: inYi ? "亿" : "M" };
+}
+
+// 中文面板的总览数字达到一亿时，按亿显示并保留两位小数。
+export function splitHeadlineTokens(n: number): { value: string; unit: string } {
+  if (lang === "zh" && Math.abs(n) >= TOKENS_PER_YI) {
+    return { value: (n / TOKENS_PER_YI).toFixed(2), unit: "亿" };
+  }
+  return splitTokens(n);
+}
+
+export function compactTokens(n: number): string {
+  const { value, unit } = splitTokens(n);
+  return unit ? `${value}${unit}` : value;
+}
+
+/**
+ * The bubble's text room: ~5 characters of number plus one unit letter inside a
+ * 76 px ball. Precision folds as the magnitude grows (9.87M / 12.3M / 100M) and
+ * rounding always carries into the next unit (999.6M → 1B) — it may never
+ * widen the string. The panel keeps `splitTokens`' precision; only the ball
+ * truncates.
+ */
+export function ballTokens(n: number): string {
+  const abs = Math.abs(n);
+  if (abs < 1e4) return Math.round(n).toLocaleString("en-US");
+  const thresholds = [1e4, 1e6, 1e9, 1e12];
+  const units = ["K", "M", "B", "T"];
+  let i = 0;
+  for (let k = thresholds.length - 1; k >= 0; k--) {
+    if (abs >= thresholds[k]) {
+      i = k;
+      break;
+    }
+  }
+  let v = abs / thresholds[i];
+  v = Number(v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2));
+  if (v >= 1000 && i < units.length - 1) {
+    i += 1;
+    v = Number((v / 1000).toFixed(2));
+  }
+  return `${n < 0 ? "-" : ""}${v}${units[i]}`;
+}
+
+export function money(n: number): string {
+  if (n === 0) return "$0";
+  if (n > 0 && n < 0.01) return "<$0.01";
+  return `$${n.toFixed(2)}`;
+}
+
+/** Credit-metered sources are not money and must never render as "$0". */
+export function credits(n: number): string {
+  return `${n < 10 ? n.toFixed(2) : n.toFixed(0)} credits`;
+}
+
+export function count(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+export function percent(n: number, digits = 0): string {
+  return `${n.toFixed(digits)}%`;
+}
+
+export function signedPercent(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  const rounded = Math.abs(n) < 0.05 ? 0 : n;
+  return `${rounded > 0 ? "+" : ""}${rounded.toFixed(0)}%`;
+}
+
+/** Delta is directional, not decorative: the sign and arrow are always present. */
+export function deltaDirection(n: number): "up" | "down" | "flat" {
+  if (!Number.isFinite(n) || Math.abs(n) < 0.5) return "flat";
+  return n > 0 ? "up" : "down";
+}
+
+/** A duration speaks in the unit that fits: past a second a millisecond
+ *  figure is a number to parse, so it moves to seconds (whole seconds past
+ *  a minute). */
+export function duration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const seconds = ms / 1000;
+  return `${seconds >= 60 ? Math.round(seconds) : seconds.toFixed(1)} s`;
+}
+
+export function relativeTime(ms: number, nowMs: number): string {
+  const diff = Math.max(0, nowMs - ms);
+  const min = Math.floor(diff / 60_000);
+  if (min < 1) return t("rel.now");
+  if (min < 60) return t("rel.min", { n: min });
+  const hours = Math.floor(min / 60);
+  if (hours < 24) return t("rel.hour", { n: hours });
+  const days = Math.floor(hours / 24);
+  if (days === 1) return t("rel.yesterday");
+  if (days < 7) return t("rel.day", { n: days });
+  return t("rel.week", { n: Math.floor(days / 7) });
+}
+
+/** Carry rounded milliseconds into seconds at 1000 ms. */
+export function formatLatency(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const rounded = Math.round(ms);
+  return rounded < 1000 ? `${rounded} ms` : `${(ms / 1000).toFixed(2)} s`;
+}
+
+/**
+ * Seconds-level age for the footer's freshness readout: exact within the first
+ * minute — where the seconds are the point, because they are how a manual
+ * refresh visibly lands — and calendar-grained after, where they are noise.
+ */
+export function freshness(ms: number, nowMs: number): string {
+  const diff = Math.max(0, nowMs - ms);
+  if (diff < 1000) return t("rel.now");
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return t("rel.sec", { n: sec });
+  return relativeTime(ms, nowMs);
+}
+
+/** Tooltip-grade absolute stamp: `HH:MM:SS`, date-prefixed when the value is
+    not from today — a panel left running overnight must not read ambiguously. */
+export function clockStamp(ms: number, nowMs: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return localDate(ms) === localDate(nowMs) ? time : `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`;
+}
+
+/** The reset column's countdown as value/unit pairs — `4h 21m` answers as
+ *  `[["4","h"],["21","m"]]` — so the column lays units out on their own fixed
+ *  columns and a growing value eats its own pad, never a neighbour's position
+ *  ("15d" against "4h" keeps `d` and `h` on one line regardless of digit count).
+ *  A bare string only for the non-grid answer (`until.soon`). */
+/** Burn-rate ETA as a compact duration — "2h 40m", "45m" — the same rhythm
+ *  and unit glyphs as [`until`], so the two read as siblings on a quota row. */
+export function etaDuration(ms: number): string {
+  const totalMin = Math.max(1, Math.round(ms / 60_000));
+  const days = Math.floor(totalMin / 1440);
+  const hours = Math.floor((totalMin % 1440) / 60);
+  const min = totalMin % 60;
+  if (days > 0) return `${days}d ${String(hours).padStart(2, "0")}h`;
+  if (hours > 0) return `${hours}h ${String(min).padStart(2, "0")}m`;
+  return `${min}m`;
+}
+
+export function until(resetsAtMs: number, nowMs: number): string | [string, string][] {
+  const diff = resetsAtMs - nowMs;
+  if (diff <= 0) return t("until.soon");
+  const totalMin = Math.floor(diff / 60_000);
+  const days = Math.floor(totalMin / 1440);
+  const hours = Math.floor((totalMin % 1440) / 60);
+  const min = totalMin % 60;
+  if (days > 0) return [[String(days), "d"], [String(hours).padStart(2, "0"), "h"]];
+  if (hours > 0) return [[String(hours), "h"], [String(min).padStart(2, "0"), "m"]];
+  return [[String(min), "m"]];
+}
+
+export const PERIOD_LABEL: Record<PeriodKey, string> = {
+  get day() {
+    return t("period.day");
+  },
+  get week() {
+    return t("period.week");
+  },
+  get month() {
+    return t("period.month");
+  },
+  get year() {
+    return t("period.year");
+  },
+};
+
+export const PERIOD_PREV: Record<PeriodKey, string> = {
+  get day() {
+    return t("prev.day");
+  },
+  get week() {
+    return t("prev.week");
+  },
+  get month() {
+    return t("prev.month");
+  },
+  get year() {
+    return t("prev.year");
+  },
+};
+
+export const PERIOD_SHORT: Record<PeriodKey, string> = {
+  get day() {
+    return t("period.short.day");
+  },
+  get week() {
+    return t("period.short.week");
+  },
+  get month() {
+    return t("period.short.month");
+  },
+  get year() {
+    return t("period.short.year");
+  },
+};
+
+/** `TokenCounts::total` and `cached_pct` are Rust methods; mirror them here. */
+export function totalOf(c: TokenCounts): number {
+  return c.input + c.cache_creation + c.cache_read + c.output;
+}
+
+export function cachedOf(c: TokenCounts): number {
+  const prompt = c.input + c.cache_creation + c.cache_read;
+  return prompt <= 0 ? 0 : (c.cache_read / prompt) * 100;
+}
+
+/** 设置选择器和状态栏快捷切换共用的显示模式。 */
+export const TRAY_MODES = [
+  "tray_only", "tokens_only", "cost_only", "tray_tokens", "tray_cost", "tray_tokens_cost", "tray_quota",
+] as const satisfies readonly TrayMode[];
+
+export const TRAY_MODE_LABEL: Record<TrayMode, string> = {
+  get tray_only() {
+    return t("tray.tray_only");
+  },
+  get tokens_only() {
+    return t("tray.tokens_only");
+  },
+  get cost_only() {
+    return t("tray.cost_only");
+  },
+  get tray_tokens() {
+    return t("tray.tray_tokens");
+  },
+  get tray_cost() {
+    return t("tray.tray_cost");
+  },
+  get tray_tokens_cost() {
+    return t("tray.tray_tokens_cost");
+  },
+  get tray_quota() {
+    return t("tray.tray_quota");
+  },
+};
+
+/** Local `YYYY-MM-DD` for an epoch-ms value, matching how report.rs buckets days. */
+export function localDate(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+export function formatDateLabel(iso: string): string {
+  const [, m, d] = iso.split("-");
+  return lang === "en" ? `${MONTHS_EN[Number(m) - 1]} ${Number(d)}` : `${Number(m)} 月 ${Number(d)} 日`;
+}
+
+export function weekdayInitial(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return (lang === "en" ? ["S", "M", "T", "W", "T", "F", "S"] : ["日", "一", "二", "三", "四", "五", "六"])[
+    new Date(y, m - 1, d).getDay()
+  ];
+}

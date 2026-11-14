@@ -1,6 +1,6 @@
-# TokenMe CLI Reference
+# kimo-token CLI Reference
 
-> Version: 0.1.8 · Updated: 2026-10-13 · Audience: CLI users · Source of truth: `crates/usage-cli/src/args.rs` (verified against `tokenme --help`) · [中文](COMMANDS.md)
+> Version: 0.1.8 · Updated: 2026-10-13 · Audience: CLI users · Source of truth: `crates/usage-cli/src/args.rs` (verified against `kimo-token --help`) · [中文](COMMANDS.md)
 
 All commands share these global options (place them anywhere on the line):
 
@@ -20,7 +20,7 @@ All commands share these global options (place them anywhere on the line):
 List every supported AI tool found on this machine, its log roots and index state.
 
 ```bash
-tokenme detect
+kimo-token detect
 ```
 
 ## daily / weekly / monthly
@@ -28,9 +28,9 @@ tokenme detect
 Per-period totals with session counts, token stages, cost and cache rate.
 
 ```bash
-tokenme daily --days 30
-tokenme weekly --weeks 8
-tokenme monthly --months 6
+kimo-token daily --days 30
+kimo-token weekly --weeks 8
+kimo-token monthly --months 6
 ```
 
 | Flag | Default | Notes |
@@ -42,7 +42,7 @@ tokenme monthly --months 6
 One window broken down by tool, model, project, MCP server or skill, with the delta against the previous slice.
 
 ```bash
-tokenme report --window week --group model
+kimo-token report --window week --group model
 ```
 
 | Flag | Values |
@@ -55,7 +55,7 @@ tokenme report --window week --group model
 Recent sessions with per-session totals.
 
 ```bash
-tokenme sessions --limit 20
+kimo-token sessions --limit 20
 ```
 
 ## quota
@@ -63,7 +63,7 @@ tokenme sessions --limit 20
 Newest live quota sample each source reported: rolling 5-hour pools, weekly windows, credit plans, reset countdowns.
 
 ```bash
-tokenme quota
+kimo-token quota
 ```
 
 Answers are cached under one shared 5-minute TTL (`crates/usage-quota/src/lib.rs::TTL`; one JSON file per tool under the OS config directory). This command waits up to 30 seconds for a live probe — the panel waits 5 — and a probe that overruns the wait still contributes its previous answer inside a 6-hour grace window. Pausing a probe whose host app has quit is the panel's `host_exit_pause` setting, not something the CLI does.
@@ -72,14 +72,14 @@ OpenCode quota uses only the official Go endpoint. The credential lookup order i
 
 Open Design quota reads `profiles.prod` from `~/.amr/config.json` (`OPEN_DESIGN_HOME` moves it): the `vela_ctrl_…` control key calls `/api/v1/workspaces/current` and then `/api/v1/workspaces/<id>/billing/preflight` for the Design Plan's 5-hour and 7-day windows. The `sk-amr-…` runtime key cannot read the control plane, and the wallet balance is not a window, so neither enters the result.
 
-Most probes only read credentials. Exactly three write a rotated one back, each into the tool's own store, atomically: **MiniMax Code** (exchanges the refresh token in its `auth.json` when the stored access token is within 2 minutes of expiry, under the vendor's own lock), **Kimi Code** (exchanges it only after `/usages` declines the stored token), and **Cline** (rotates its gateway token ahead of expiry). Every other probe writes nothing — the WorkBuddy credential on disk comes from `tokenme workbuddy-login`, a command you ran, not from a probe.
+Most probes only read credentials. Exactly three write a rotated one back, each into the tool's own store, atomically: **MiniMax Code** (exchanges the refresh token in its `auth.json` when the stored access token is within 2 minutes of expiry, under the vendor's own lock), **Kimi Code** (exchanges it only after `/usages` declines the stored token), and **Cline** (rotates its gateway token ahead of expiry). Every other probe writes nothing — the WorkBuddy credential on disk comes from `kimo-token workbuddy-login`, a command you ran, not from a probe.
 
 ## dsh-doctor
 
 DSH accuracy audit: the desktop app's own projection ledger (`tokenUsage`) printed next to what the index holds, per session, with a `status` of `ok`, `MISMATCH`, `v3 stream`, `not indexed` or `indexed but no projection`. Notes carry the structural reasons for honest drift — inherited pre-v4 events, subagent spend that lives outside `tokenUsage`. No flags.
 
 ```bash
-tokenme dsh-doctor
+kimo-token dsh-doctor
 ```
 
 ## codex-doctor
@@ -87,7 +87,7 @@ tokenme dsh-doctor
 Codex accuracy audit: every rollout re-parsed from scratch (cursor 0, no manifest, no dedupe) and aggregated per session, next to the indexed totals. Codex keeps no vendor-side ledger, so the replay is the independent truth — a `MISMATCH` row means the indexer dropped a call or counted it twice. No flags.
 
 ```bash
-tokenme codex-doctor
+kimo-token codex-doctor
 ```
 
 ## workbuddy-login
@@ -95,7 +95,7 @@ tokenme codex-doctor
 Log in to domestic WorkBuddy for the quota probe: asks the vendor for a state, opens Tencent SSO in your browser, then polls up to 5 minutes for the token. What it saves lands in `workbuddy-auth.json` under the OS config directory (the probe reads it, and never refreshes it); nothing is stored when the window elapses. No flags. The saved credential's domain selects its edition; a domestic login never feeds the international WorkBuddy AI row. Installed desktop clients normally need no extra login.
 
 ```bash
-tokenme workbuddy-login
+kimo-token workbuddy-login
 ```
 
 ## pricing
@@ -103,18 +103,18 @@ tokenme workbuddy-login
 Price provenance: models.dev sells most models through several providers, so a cost number is only meaningful together with the listing that won.
 
 ```bash
-tokenme pricing explain deepseek-v4-flash   # which listing priced it, and the losers
-tokenme pricing contested --limit 25        # multi-provider models and the money at stake
+kimo-token pricing explain deepseek-v4-flash   # which listing priced it, and the losers
+kimo-token pricing contested --limit 25        # multi-provider models and the money at stake
 ```
 
 ## budget
 
-Spend caps measured against tokenme's own cost, for tools whose vendor publishes no limit.
+Spend caps measured against kimo-token's own cost, for tools whose vendor publishes no limit.
 
 ```bash
-tokenme budget list
-tokenme budget set zcode --daily 5 --monthly 50
-tokenme budget rm zcode
+kimo-token budget list
+kimo-token budget set zcode --daily 5 --monthly 50
+kimo-token budget rm zcode
 ```
 
 Units are USD. `0` clears just that window.
@@ -124,10 +124,10 @@ Units are USD. `0` clears just that window.
 Drive the index explicitly.
 
 ```bash
-tokenme index --status              # show state without ingesting
-tokenme index --rebuild             # drop and re-read the retention window
-tokenme index --prune               # drop events older than retention
-tokenme index --force               # steal the ingest lease from a dead process
+kimo-token index --status              # show state without ingesting
+kimo-token index --rebuild             # drop and re-read the retention window
+kimo-token index --prune               # drop events older than retention
+kimo-token index --force               # steal the ingest lease from a dead process
 ```
 
 Every command verifies the index image when it opens it (`PRAGMA quick_check`). A damaged image is not an error you have to act on: it is moved aside as `index.db.corrupt-<timestamp>` (with its `-wal` / `-shm`, so the rebuild cannot inherit them), a fresh empty index takes its place, a `warning:` line says so on stderr, and the next ingest refills everything from the tools' own logs. A file that cannot be opened at all is quarantined the same way, silently, before the command starts.
@@ -138,13 +138,13 @@ The macOS application icon each tool row would show, as data URLs (what the pane
 
 ## export
 
-Export a window of this machine's events as a sync bundle (gzipped JSONL + a manifest carrying the sha256 and per-tool sums) for another machine to import. Lands in `~/tokenme-sync` by default — the directory the menu-bar engine merges automatically — so a Linux collector's whole writer is one timer line. Recent events are ingested first (same as every reporting command; `--no-ingest` skips that). A quiet or logless machine still gets a valid bundle with `rows 0` — the collector's timer never fails on a slow day.
+Export a window of this machine's events as a sync bundle (gzipped JSONL + a manifest carrying the sha256 and per-tool sums) for another machine to import. Lands in `~/kimo-token-sync` by default — the directory the menu-bar engine merges automatically — so a Linux collector's whole writer is one timer line. Recent events are ingested first (same as every reporting command; `--no-ingest` skips that). A quiet or logless machine still gets a valid bundle with `rows 0` — the collector's timer never fails on a slow day.
 
 ```bash
-tokenme export                          # last 30 days → ~/tokenme-sync/tokenme-<host>.jsonl.gz
-tokenme export --days 400               # first backfill: the whole retention window
-tokenme export --out /tmp/share         # somewhere else (a Syncthing folder, a USB stick)
-tokenme export --origin workstation-01  # pin the identity (default: hostname)
+kimo-token export                          # last 30 days → ~/kimo-token-sync/kimo-token-<host>.jsonl.gz
+kimo-token export --days 400               # first backfill: the whole retention window
+kimo-token export --out /tmp/share         # somewhere else (a Syncthing folder, a USB stick)
+kimo-token export --origin workstation-01  # pin the identity (default: hostname)
 ```
 
 The `.gz` is written via `*.tmp` + rename and the manifest last, so a transport never sees a half-written bundle. Re-exporting the same window is safe: imports are idempotent. Both files land `0600` on unix — a bundle names sessions, projects and local log paths, so it is private by default.
@@ -154,21 +154,21 @@ The `.gz` is written via `*.tmp` + rename and the manifest last, so a transport 
 Merge one bundle exported by another machine into the local index. Validates the sha256 and every batch's totals against the manifest first; any failure rolls the whole merge back and the previous numbers stay. Re-importing the same file changes nothing.
 
 ```bash
-tokenme import ~/tokenme-sync/tokenme-build-01.jsonl.gz
-tokenme import bundle.jsonl.gz --dry-run   # parse + reconcile, then roll back
+kimo-token import ~/kimo-token-sync/kimo-token-build-01.jsonl.gz
+kimo-token import bundle.jsonl.gz --dry-run   # parse + reconcile, then roll back
 ```
 
-On the menu-bar side you rarely need this: the panel engine auto-imports `~/tokenme-sync` every pass and shows a **多端同步 / Multi-device sync** badge with the newest merge per machine (warning-hued past 24 h).
+On the menu-bar side you rarely need this: the panel engine auto-imports `~/kimo-token-sync` every pass and shows a **多端同步 / Multi-device sync** badge with the newest merge per machine (warning-hued past 24 h).
 
 ## sync run / sync stop / sync reset / sync status
 
-`sync pair --invite '<complete tokenme://device-pair invite>'` is the preferred secondary entry point. After certificate-pin verification it sends the pairing request and stores the endpoint, server name, certificate, pin, primary binding and local identity path in the user data directory; ordinary users do not enter a stream or generation. After approval, `sync run` keeps the single secondary runtime in the foreground: each pass ingests local events, builds a stable snapshot for the local origin, allocates generation and payload revision and writes the journal and immutable outbox in one SQLite transaction, then uploads and ACKs over pinned TLS 1.3.
+`sync pair --invite '<complete kimo-token://device-pair invite>'` is the preferred secondary entry point. After certificate-pin verification it sends the pairing request and stores the endpoint, server name, certificate, pin, primary binding and local identity path in the user data directory; ordinary users do not enter a stream or generation. After approval, `sync run` keeps the single secondary runtime in the foreground: each pass ingests local events, builds a stable snapshot for the local origin, allocates generation and payload revision and writes the journal and immutable outbox in one SQLite transaction, then uploads and ACKs over pinned TLS 1.3.
 
 ```bash
-tokenme sync run       # user-level Ubuntu/Linux resident entry; supervise with systemd --user if desired
-tokenme sync status    # devices, stream/epoch, runtime, pending bytes, last connection and error
-tokenme sync stop      # request a stop through the private user Unix socket; keep config and outbox
-tokenme sync reset     # after stopping, drop stream/outbox/ACK checkpoints, recover a new stream and re-sync from scratch
+kimo-token sync run       # user-level Ubuntu/Linux resident entry; supervise with systemd --user if desired
+kimo-token sync status    # devices, stream/epoch, runtime, pending bytes, last connection and error
+kimo-token sync stop      # request a stop through the private user Unix socket; keep config and outbox
+kimo-token sync reset     # after stopping, drop stream/outbox/ACK checkpoints, recover a new stream and re-sync from scratch
 ```
 
 `sync reset` keeps local usage history and the pairing. It drops only state bound to the old stream: queued packages, the journal, generation/ACK checkpoints and the primary-download cursor. The next `sync run` uses the recovery handshake to freeze that stream, adopts a fresh one, uploads the full local snapshot again and re-reads the primary's history from the first identity. A running runtime is refused; stop it first so the reset cannot delete rows the runtime still holds in memory.
@@ -181,7 +181,7 @@ With Allow LAN enabled, the primary also publishes an `_tokenme-sync._tcp.local.
 ## diagnostics-stdio
 
 ```bash
-tokenme --db ~/.local/share/tokenme/index.db diagnostics-stdio
+kimo-token --db ~/.local/share/kimo-token/index.db diagnostics-stdio
 ```
 
 Starts the local diagnostics MCP newline-delimited JSON-RPC stdio host. It only reads the existing device-sync identity from `--db`; it does not ingest logs or open a listener. stdin/stdout are reserved for protocol responses and operational errors go to stderr. Each start creates a process-scoped diagnostics authority, so grants issued by an older process are not accepted after restart. The command fails with an actionable pairing/start hint when the database has no initialized device-sync state.
@@ -189,8 +189,8 @@ Starts the local diagnostics MCP newline-delimited JSON-RPC stdio host. It only 
 Use a Panel-exported diagnostic grant as a real remote bridge configuration:
 
 ```bash
-tokenme --db ~/.local/share/tokenme/index.db \
-  --diagnostics-config ~/Downloads/tokenme-diagnostics.json \
+kimo-token --db ~/.local/share/kimo-token/index.db \
+  --diagnostics-config ~/Downloads/kimo-token-diagnostics.json \
   diagnostics-stdio
 ```
 
@@ -201,11 +201,11 @@ This mode loads the debugger private key from the paired secondary identity in `
 Upload local events to an already-approved primary over strict HTTPS/TLS 1.3. This command does not fake pairing, does not clear local data, and does not change the existing `export/import` file path. The primary must issue `primary_id`, `stream_id` and `data_epoch`; provide its certificate PEM and exact 64-hex SHA-256 pin:
 
 ```bash
-tokenme sync upload --endpoint https://192.168.1.20:47821 \
-  --server-name tokenme-primary \
-  --trust-cert ~/.config/tokenme/primary-cert.pem \
+kimo-token sync upload --endpoint https://192.168.1.20:47821 \
+  --server-name kimo-token-primary \
+  --trust-cert ~/.config/kimo-token/primary-cert.pem \
   --pin-sha256 <64-hex-cert-sha256> \
-  --identity ~/.config/tokenme/device-identity.json --origin laptop \
+  --identity ~/.config/kimo-token/device-identity.json --origin laptop \
   --primary-id <primary-id> --stream-id <stream-id> \
   --data-epoch 1 --generation 1
 ```
@@ -218,6 +218,6 @@ Limits and trust: payload rows are capped (the manifest's count plus slack) so a
 
 | Data | macOS | Linux | Windows |
 | :--- | :--- | :--- | :--- |
-| SQLite index | `~/Library/Application Support/tokenme/index.db` | `~/.local/share/tokenme/index.db` | `%LOCALAPPDATA%\tokenme\index.db` |
-| Settings | `~/Library/Application Support/tokenme/settings.json` | `~/.config/tokenme/settings.json` | `%APPDATA%\tokenme\settings.json` |
-| Quota cache | `<config dir>/tokenme/quota/*.json` | same pattern | same pattern |
+| SQLite index | `~/Library/Application Support/dev.kimo-token.bar/index.db` | `~/.local/share/kimo-token/index.db` | `%LOCALAPPDATA%\kimo-token\index.db` |
+| Settings | `~/Library/Application Support/dev.kimo-token.bar/settings.json` | `~/.config/kimo-token/settings.json` | `%APPDATA%\kimo-token\settings.json` |
+| Quota cache | `<config dir>/kimo-token/quota/*.json` | same pattern | same pattern |

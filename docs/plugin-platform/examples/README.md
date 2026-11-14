@@ -15,7 +15,7 @@
 
 清单采用这些草案约定：
 
-- `manifestVersion` 与 `hostApi` 是插件协议版本，不是当前应用版本；不据此决定 TokenMe 发版版本号。
+- `manifestVersion` 与 `hostApi` 是插件协议版本，不是当前应用版本；不据此决定 kimo-token 发版版本号。
 - `tools[].id` 延续工具身份；`id` 标识代码包，插件更新不会更换工具 ID。
 - `labelKey`、`titleKey`、`descriptionKey`、`summaryKey` 为插件语言目录中的键。
 - `messageKey` 连接诊断事件/错误目录与插件语言资源；事件名和错误码保持机器可检索。

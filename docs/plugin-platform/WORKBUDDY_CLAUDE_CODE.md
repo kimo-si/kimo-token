@@ -1,6 +1,6 @@
 # WorkBuddy → Claude Code 首个候选场景
 
-日期：2026-10-20（Asia/Shanghai）。状态：用户已要求评估本机WorkBuddy供本机Claude Code使用的两种方式，按独立能力设计，建议模型网关优先、任务委派单独验收。本文记录目标、证据和实施票，**没有可运行的TokenMe代理**。关联：[模式评估与委派研究](AGENT_MODES_EVALUATION.md)、[网关设计](AGENT_GATEWAY.md)、[实施规格F13](IMPLEMENTATION_SPEC.md)。
+日期：2026-10-20（Asia/Shanghai）。状态：用户已要求评估本机WorkBuddy供本机Claude Code使用的两种方式，按独立能力设计，建议模型网关优先、任务委派单独验收。本文记录目标、证据和实施票，**没有可运行的kimo-token代理**。关联：[模式评估与委派研究](AGENT_MODES_EVALUATION.md)、[网关设计](AGENT_GATEWAY.md)、[实施规格F13](IMPLEMENTATION_SPEC.md)。
 
 ## 1. 两条路径和首个候选目标
 
@@ -15,7 +15,7 @@
 
 ```mermaid
 flowchart LR
-  C[本机 Claude Code] -->|Anthropic Messages| H[TokenMe 本机网关]
+  C[本机 Claude Code] -->|Anthropic Messages| H[kimo-token 本机网关]
   H --> P[协议插件：请求与流式事件转换]
   P --> W[WorkBuddy 插件：账号、模型与上游适配]
   W --> B[获准且验证过的本机 broker 或上游接口]
@@ -27,7 +27,7 @@ flowchart LR
 ## 2. 当前核验的证据及边界
 
 1. Claude Code 官方文档说明自定义网关可通过 ANTHROPIC_BASE_URL 接入 Anthropic Messages；必须实现 /v1/messages，计数接口可选。流式响应要有完整事件结束，工具调用也须保留语义。来源：[网关协议](https://code.claude.com/docs/en/llm-gateway-protocol)。这证明客户端有入口，不证明 WorkBuddy 上游已适配。
-2. Bearer 认证可用 ANTHROPIC_AUTH_TOKEN。接入配置由未来 TokenMe 页面产生，在独立终端/profile验收，不覆盖现有全局 Claude Code 设置或登录。来源：[连接网关](https://code.claude.com/docs/en/llm-gateway-connect)。
+2. Bearer 认证可用 ANTHROPIC_AUTH_TOKEN。接入配置由未来 kimo-token 页面产生，在独立终端/profile验收，不覆盖现有全局 Claude Code 设置或登录。来源：[连接网关](https://code.claude.com/docs/en/llm-gateway-connect)。
 3. 现有代码 [WorkBuddy broker](../../crates/usage-quota/src/providers/workbuddy_wbipc.rs) 实现 wbipc 握手和 wb.request/http.fetch 的有界请求，[WorkBuddy quota](../../crates/usage-quota/src/providers/workbuddy.rs)及[国内版](../../crates/usage-quota/src/providers/workbuddy_cn.rs)用于配额/签到。这些静态代码不含可复用为模型代理的完整推理流、工具循环和取消验收。
 4. WorkBuddy 国内版官方 Open API 描述了经 OAuth 授权向已连接 PC 助理发消息和读历史；它经过 HTTPS 平台，不是已证明的本机模型监听，也不自动提供模型协议。注册应用和服务端 secret 是该路径的额外接入要求，不能把 secret 内嵌桌面包，也不将其默认为无后端的本地方案。来源：[WorkBuddy Open API](https://open.workbuddy.cn/docs/openapi)。该证据仅属于国内版，不能套用到 WorkBuddy AI 国际版。
 5. 同类社区项目文档列出 /v1/messages 到 WorkBuddy/CodeBuddy 上游的转换，可用作待审计的协议线索。未运行、未移植，也未证明本机版本可用；不能直接继承其账号池、自动换号/续期或监听默认值。来源：[workbuddy-gateway 作者文档](https://github.com/CangShui/workbuddy-gateway/blob/main/docs/user-guide.md)。
@@ -38,7 +38,7 @@ flowchart LR
 
 拟议首个包组为可复用的 Anthropic Messages 协议插件，以及 WorkBuddy provider 插件；允许同包交付，注册仍使用两个扩展点。国内 workbuddy_cn 与国际 workbuddy 分别声明 tool/账号/认证/端点/模型目录及授权；同一显示名称不触发合并，禁止自动回退另一个版本或账号。
 
-TokenMe 核心实现通用监听、consumer key、路由与授权、长 IO、短步执行、取消/未知结果、用量接收和统一设置。上游 origin、路径、wbipc 发现/握手、消息/工具/用量映射和模型目录均属插件。第一个 Agent 接入完成后，在同一已实现传输能力内增加其他 provider 应只安装新插件；遇到新 OS/传输服务则演进宿主 profile，不承诺任意接口无需框架升级。
+kimo-token 核心实现通用监听、consumer key、路由与授权、长 IO、短步执行、取消/未知结果、用量接收和统一设置。上游 origin、路径、wbipc 发现/握手、消息/工具/用量映射和模型目录均属插件。第一个 Agent 接入完成后，在同一已实现传输能力内增加其他 provider 应只安装新插件；遇到新 OS/传输服务则演进宿主 profile，不承诺任意接口无需框架升级。
 
 若 wbipc 是必要路径，G03 必须增加通用 broker.session.open/read/write/close 服务：端点来源/所有者与最终 pipe/socket 身份验证、双向流、帧上限、HMAC/凭据证明、取消和超时均受宿主监督。原 broker.request 的单次完整响应不等于流式 broker。ticket 不交给协议插件；握手秘密由绑定的凭据/证明服务使用，算法、域与参数 schema 在 G01 固定。具体 pipe/operation 名称以版本证据确定，不在方案中猜测。
 
@@ -72,4 +72,4 @@ WB-P0步骤1—2是 G01/G04 的可行性前置；步骤3—5在 G01/G02/G03 后�
 
 ## 6. 当前结论
 
-架构能够新增这两类插件，Claude Code有模型网关和MCP接入口；**当前TokenMe插件原型与现有适配代码还不能完成这些链路**。先实现F13通用平台并分别通过WB-P0与WB-D0—D3/G04/G07，才能承诺相应能力。模式建议已给出，具体机器接口与全量合同仍须据证据冻结，不能因为找到第三方项目就标为已完成。
+架构能够新增这两类插件，Claude Code有模型网关和MCP接入口；**当前kimo-token插件原型与现有适配代码还不能完成这些链路**。先实现F13通用平台并分别通过WB-P0与WB-D0—D3/G04/G07，才能承诺相应能力。模式建议已给出，具体机器接口与全量合同仍须据证据冻结，不能因为找到第三方项目就标为已完成。

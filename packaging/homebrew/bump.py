@@ -21,28 +21,28 @@ def main() -> None:
             digest, name = line.split()
             hashes[name] = digest
 
-    formula = tap / "Formula" / "tokenme-cli.rb"
+    formula = tap / "Formula" / "kimo-token-cli.rb"
     text = re.sub(r'version "[^"]+"', f'version "{version}"', formula.read_text(), count=1)
     for target in ("aarch64", "x86_64"):
-        name = f"tokenme-cli-{target}-apple-darwin.tar.gz"
+        name = f"kimo-token-cli-{target}-apple-darwin.tar.gz"
         text = re.sub(
-            rf'(tokenme-cli-{target}-apple-darwin\.tar\.gz"\n\s+sha256 ")[0-9a-f]{{64}}',
+            rf'(kimo-token-cli-{target}-apple-darwin\.tar\.gz"\n\s+sha256 ")[0-9a-f]{{64}}',
             lambda m, h=hashes[name]: m.group(1) + h,
             text,
         )
     formula.write_text(text)
 
-    cask = tap / "Casks" / "tokenme.rb"
+    cask = tap / "Casks" / "kimo-token.rb"
     text = re.sub(r'version "[^"]+"', f'version "{version}"', cask.read_text(), count=1)
     arm = next(h for name, h in hashes.items() if name.endswith("_arm64.dmg"))
     uni = next(h for name, h in hashes.items() if name.endswith("universal.dmg"))
     text = re.sub(
-        r'(tokenme_[^"]+_arm64\.dmg"\n\s+sha256 ")[0-9a-f]{64}',
+        r'(kimo-token_[^"]+_arm64\.dmg"\n\s+sha256 ")[0-9a-f]{64}',
         lambda m: m.group(1) + arm,
         text,
     )
     text = re.sub(
-        r'(tokenme_universal\.dmg"\n\s+sha256 ")[0-9a-f]{64}',
+        r'(kimo-token_universal\.dmg"\n\s+sha256 ")[0-9a-f]{64}',
         lambda m: m.group(1) + uni,
         text,
     )

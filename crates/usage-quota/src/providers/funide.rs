@@ -116,7 +116,7 @@ pub fn manual_checkin() -> Result<(bool, String), String> {
     let body = balance(&token).ok_or_else(|| "无法读取 FunIDE 签到状态，请确认已登录".to_string())?;
     let (ok, message, refreshed) = claim(&token, &body)?;
     if ok {
-        if let Some(cache) = crate::cache::Cache::open("tokenme/quota", crate::TTL) {
+        if let Some(cache) = crate::cache::Cache::open("quota", crate::TTL) {
             cache.store("funide", &samples_from(&refreshed));
         }
     }
@@ -124,7 +124,7 @@ pub fn manual_checkin() -> Result<(bool, String), String> {
 }
 
 /// `<data>/FunIDE/User/globalStorage/state.vscdb`, then the plaintext token.
-/// `$FUNIDE_DATA_DIR` is tokenme's override; the IDE documents none.
+/// `$FUNIDE_DATA_DIR` is kimo-token's override; the IDE documents none.
 fn access_token() -> Option<String> {
     let path = state_db()?;
     let conn = Connection::open_with_flags(

@@ -1,32 +1,12 @@
 #!/usr/bin/env bash
-# Deliver the dev tree to the public mirror — the gate, then the push, in that
-# order, every time (docs/internal/PUBLIC_DELIVERY.md, the steady-state flow).
-#
-#   scripts/public-deliver.sh             # gate + stage + deliver
-#   scripts/public-deliver.sh --dry-run   # gate + stage, push nothing public
-#
-# What it does:
-#   1. refuses to run unless the repo-local identity is the allowlisted one —
-#      the gate rejects the commit anyway, so fail here with the fix instead
-#   2. runs the gate at full scope (scripts/scan-public.py over --branches
-#      --tags): exactly the refs a push can carry, ~2-3 min; CLEAN or nothing
-#      happens
-#   3. moves the local `github` branch to main and pushes it to origin — the
-#      branch is the staged delivery point, gate-clean by construction, so the
-#      forge always shows the state the public repo is meant to carry
-#   4. pushes to the public remote: new tags first (the release workflow must
-#      start before main can promise its bytes), then main with
-#      --force-with-lease
-#
-# The github push needs one interactive credential-manager login the first
-# time; if it fails, steps 1-3 have already landed — rerun this script when
-# the network and the login window cooperate. Nothing but this script and the
-# one-time rewrite (2026-10-09, recorded in PUBLIC_DELIVERY.md) ever touches
-# the public refs.
-
+# 检查待发布提交后，将 main 推送到本项目的公开仓库。
+# Usage: scripts/public-deliver.sh [--dry-run]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+REMOTE="origin"
+REPOSITORY="kimo-si/kimo-token"
+BRANCH="main"
 DRY_RUN=0
 for arg in "$@"; do
   case "$arg" in
@@ -35,59 +15,39 @@ for arg in "$@"; do
   esac
 done
 
-git remote get-url github >/dev/null 2>&1 || {
-  echo "no 'github' remote; add it first:" >&2
-  echo "  git remote add github https://github.com/Bencibr/tokenme.git" >&2
-  exit 1
+# 校验发布目标，防止本地仍指向旧仓库或其他仓库。
+remote_url=$(git remote get-url "$REMOTE")
+case "$remote_url" in
+  "https://github.com/${REPOSITORY}.git"|"https://github.com/${REPOSITORY}"|"git@github.com:${REPOSITORY}.git") ;;
+  *) echo "${REMOTE} must point to github.com/${REPOSITORY}" >&2; exit 1 ;;
+esac
+
+# 只发布当前 main 的已提交内容，防止漏掉本地改动。
+[[ "$(git branch --show-current)" == "$BRANCH" ]] || {
+  echo "switch to ${BRANCH} before publishing" >&2; exit 1;
+}
+[[ -z "$(git status --porcelain)" ]] || {
+  echo "commit local changes before publishing" >&2; exit 1;
 }
 
-email=$(git config user.email || true)
-[[ "$email" == "agent@local" ]] || {
-  echo "repo-local identity is '$email'; the gate allowlists agent@local only:" >&2
-  echo "  git config user.name Agent && git config user.email agent@local" >&2
-  exit 1
-}
-
-echo "==> hero: banner follows the tree (version, tool count, pill layout, PNGs)"
-python scripts/update-hero.py
-if ! git diff --quiet -- assets/tokenme-hero-dark.svg assets/tokenme-hero-light.svg \
-                         assets/tokenme-hero-dark.png assets/tokenme-hero-light.png; then
-  git add assets/tokenme-hero-dark.svg assets/tokenme-hero-light.svg \
-          assets/tokenme-hero-dark.png assets/tokenme-hero-light.png
-  git commit --quiet -m "docs(hero): the banner follows the tree — version from Cargo.toml, tool count from TOOL_IDS, pill layout re-flowed, PNGs re-rendered at 2x"
+# 获取远程分支并检查快进关系；失败时中止，不覆盖已有提交。
+remote_sha=$(git ls-remote --heads "$REMOTE" "refs/heads/${BRANCH}" | cut -f1)
+scan_range="HEAD"
+if [[ -n "$remote_sha" ]]; then
+  git fetch "$REMOTE" "$BRANCH"
+  git merge-base --is-ancestor "$remote_sha" HEAD || {
+    echo "remote ${BRANCH} has changes; integrate them before publishing" >&2; exit 1;
+  }
+  scan_range="${remote_sha}..HEAD"
 fi
 
-echo "==> gate: the delivery range, exactly what the push carries"
-PUB=$(git rev-parse --short public)
-LEASE_NOW=$(git ls-remote github refs/heads/main 2>/dev/null | cut -f1 || true)
-if [[ -n "$LEASE_NOW" ]]; then
-  python scripts/scan-public.py "${LEASE_NOW}..public"
-else
-  python scripts/scan-public.py public
-fi
-
-echo "==> stage: the github branch follows the public branch, and rides to the forge"
-git branch -f github public
-git push origin github
-
-if [[ $DRY_RUN == 1 ]]; then
-  echo "==> dry run: nothing pushed to the public remote"
+# 检查此次推送携带的内容及作者信息。
+python3 scripts/scan-public.py "$scan_range"
+if [[ "$DRY_RUN" == 1 ]]; then
+  echo "dry run: checks passed; nothing pushed"
   exit 0
 fi
 
-echo "==> deliver: new tags first, then main"
-remote_tags=$(git ls-remote --tags github 2>/dev/null | awk -F'/' '{print $NF}' | sed 's/\^{}$//' | sort -u || true)
-mapfile -t NEW_TAGS < <(comm -23 <(git tag | sort) <(printf '%s\n' "$remote_tags" | sort -u))
-if [[ ${#NEW_TAGS[@]} -gt 0 ]]; then
-  git push github "${NEW_TAGS[@]}"
-else
-  echo "    no new tags"
-fi
-
-lease=$(git ls-remote github refs/heads/main 2>/dev/null | cut -f1 || true)
-if [[ -n "$lease" ]]; then
-  git push --force-with-lease="refs/heads/main:$lease" github public:main
-else
-  git push --force github public:main
-fi
-echo "==> delivered: github/main = $(git rev-parse --short main)"
+# 仅推送 main；发布标签由维护者单独推送，避免触发继承的旧标签。
+git push "$REMOTE" "HEAD:refs/heads/${BRANCH}"
+echo "delivered: ${REPOSITORY}/${BRANCH} = $(git rev-parse --short HEAD)"

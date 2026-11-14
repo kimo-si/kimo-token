@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Independent recomputation of tokenme's per-source totals.
+"""Independent recomputation of kimo-token's per-source totals.
 
 Nothing here shares code with the Rust adapters: each source is re-read from its
 raw files with the stage convention that source's own data proves (the identities
 are asserted in-line, not assumed), and the result is diffed against the SQLite
-index tokenme built. A match means two independent implementations agree; a
+index kimo-token built. A match means two independent implementations agree; a
 mismatch is a bug in one of them and gets reported with its size.
 
 Usage:  scripts/verify-totals.py [--db PATH] [--tolerance 0.005]
@@ -718,7 +718,7 @@ def ccswitch():
 
     Two independent channels of duplication, and the gate has to hold on live data
     or this source bills the same calls twice: rows CC Switch re-imported from a
-    tool's own session file (`data_source`), and rows it proxied for a tool tokenme
+    tool's own session file (`data_source`), and rows it proxied for a tool kimo-token
     reads directly (`data_source = proxy` plus `app_type`). Here the whole 92,754-row
     ledger is one or the other, so the correct contribution is *nothing*.
     """
@@ -777,7 +777,7 @@ def ccswitch():
         "cr": agg["cr"],
         "out": agg["out"],
         "notes": f"ledger rows={len(got):,} [{top}]; gated as re-imported session={mirrored:,}, "
-        f"as proxied traffic of a tool tokenme reads itself={proxied_native:,}; "
+        f"as proxied traffic of a tool kimo-token reads itself={proxied_native:,}; "
         f"zero-usage={zero:,}, no timestamp={no_ts:,}, netting guard failed={guard:,}",
     }
 
@@ -1407,7 +1407,7 @@ def row_identity(index_db, tool, keyed, tolerance):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bracket", action="store_true", help="re-read everything after rebuilding the index")
-    ap.add_argument("--db", default=os.path.join(data_dir(), "tokenme", "index.db"))
+    ap.add_argument("--db", default=os.path.join(data_dir(), "kimo-token", "index.db"))
     ap.add_argument("--tolerance", type=float, default=0.005, help="relative tolerance for live-growing sources")
     args = ap.parse_args()
 
@@ -1427,14 +1427,14 @@ def main():
             repo,
             "target",
             "release",
-            "tokenme.exe" if os.name == "nt" else "tokenme",
+            "kimo-token.exe" if os.name == "nt" else "kimo-token",
         )
         if os.path.isfile(binary):
             command = [binary, "--db", args.db, "--offline", "index", "--rebuild"]
         else:
             cargo = shutil.which("cargo")
             if not cargo:
-                raise SystemExit("tokenme release binary and cargo are both unavailable; build the CLI first")
+                raise SystemExit("kimo-token release binary and cargo are both unavailable; build the CLI first")
             command = [
                 cargo,
                 "run",

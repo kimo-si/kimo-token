@@ -12,11 +12,11 @@
 
 | 编写方式 | 规划支持级别 | 进入正式支持的条件 |
 | --- | --- | --- |
-| Rust | 参考链路已提供，生产 SDK 首发路线 | 复杂宿主调用、实际 TokenMe 接入、全局取消/资源和目标平台验收 |
+| Rust | 参考链路已提供，生产 SDK 首发路线 | 复杂宿主调用、实际 kimo-token 接入、全局取消/资源和目标平台验收 |
 | TypeScript | P1 做最小可行性记录；P2 后推进独立 SDK，初期实验状态 | 组件化构建、打包体积、启动/内存、Promise/取消和调试能力达到同一合同，才进入正式支持 |
 | JavaScript | 若复用 TS 工具链可作为无类型源入口；不额外维护另一套运行协议 | 使用同一受限 API 和测试矩阵，不承诺 Node.js 兼容 |
 | 纯声明式配置 | 首版提供标准模板覆盖简单 HTTP/字段映射任务 | 由官方通用处理器实现，权限、错误和结果仍遵守标准合同；复杂逻辑仍需代码 |
-| Python/Go/C++ 等 | 首版不发布正式 SDK；保留语言无关协议 | 存在编译工具不等于 TokenMe 已支持，需独立绑定、打包、调试和兼容性验证 |
+| Python/Go/C++ 等 | 首版不发布正式 SDK；保留语言无关协议 | 存在编译工具不等于 kimo-token 已支持，需独立绑定、打包、调试和兼容性验证 |
 
 Rust 首发的理由是当前代码复用和迁移成本可验证；这不是要求所有未来插件作者只能使用 Rust。TypeScript 的易用性目标也不能靠放开任意 Node API 来实现。
 
@@ -30,7 +30,7 @@ Wasm 是构建/执行格式，WIT 是接口合同，Rust/TypeScript 是开发语
 
 ```text
 Rust 源码 + Rust SDK + WIT 绑定
-    → wasm32-wasip2 组件 → .tokenme-plugin → TokenMe 的一个 Wasm 执行引擎
+    → wasm32-wasip2 组件 → .kimo-token-plugin → kimo-token 的一个 Wasm 执行引擎
 
 TypeScript 源码 + TS SDK + 生成类型
     → JavaScript ESM → componentize-js/jco 等组件化工具
@@ -45,7 +45,7 @@ Bytecode Alliance 的官方资料描述了 Rust 组件构建，以及 JavaScript
 
 ## 3. 开发者与用户环境
 
-插件作者需要语言编译工具链和 TokenMe 开发工具；普通用户只安装插件包，运行所需能力由 TokenMe 提供，不自行安装 Rust、Node.js、Python 或 Wasmtime CLI。
+插件作者需要语言编译工具链和 kimo-token 开发工具；普通用户只安装插件包，运行所需能力由 kimo-token 提供，不自行安装 Rust、Node.js、Python 或 Wasmtime CLI。
 
 官方模板固定 Rust/目标/绑定生成器或 Node/打包器/组件工具的版本与依赖锁。SDK 构建输出记录来源修订、SDK 版本、工具链版本、宿主 API 和模块摘要；发行时不暴露构建机用户名和绝对路径。
 
@@ -64,7 +64,7 @@ SDK 交付包含六部分：
 5. **开发/打包工具**：脚手架、绑定生成、构建、验证、本地开发安装、调试、打包和兼容检查。
 6. **文档与参考插件**：最小插件、完整配额/用量插件、带状态核对的签到样例和迁移教程。
 
-本地实施 crate 固定名 `usage-plugin-sdk`、`usage-plugin-testkit`。未来 TS 拟用 `@tokenme/plugin-sdk` 和 `@tokenme/plugin-testkit`，发布前检查包名归属；不表示注册中心已有这些包。
+本地实施 crate 固定名 `usage-plugin-sdk`、`usage-plugin-testkit`。未来 TS 拟用 `@kimo-token/plugin-sdk` 和 `@kimo-token/plugin-testkit`，发布前检查包名归属；不表示注册中心已有这些包。
 
 ## 5. 核心接口与生命周期
 
@@ -116,9 +116,9 @@ python tools/plugin.py check
 python tools/plugin.py test
 python tools/plugin.py build
 python tools/plugin.py pack
-python tools/plugin.py inspect dist/org.example.tokenme.reference_0.1.0.tokenme-plugin
-python tools/plugin.py install dist/org.example.tokenme.reference_0.1.0.tokenme-plugin --allow-unsigned-local
-python tools/plugin.py run org.example.tokenme.reference --task collect-usage --repeat 2
+python tools/plugin.py inspect dist/org.example.kimo-token.reference_0.1.0.kimo-token-plugin
+python tools/plugin.py install dist/org.example.kimo-token.reference_0.1.0.kimo-token-plugin --allow-unsigned-local
+python tools/plugin.py run org.example.kimo-token.reference --task collect-usage --repeat 2
 python tools/plugin.py verify
 ```
 
@@ -131,7 +131,7 @@ python tools/plugin.py verify
 - `pack`：生成受限包结构、完整性文件和构建元数据；签名通过单独的发布者身份流程完成。
 - `verify`：native/最终组件/包/安装/错误/门控/预算闭环，输出独立场景报告和 verification.json。
 
-生产独立工具名 `tokenme-plugin`、自动重建/热重载和多版本兼容扫描由实施票 F09 交付；本轮不将这些后续命令写成已经可用。
+生产独立工具名 `kimo-token-plugin`、自动重建/热重载和多版本兼容扫描由实施票 F09 交付；本轮不将这些后续命令写成已经可用。
 
 开发 profile 与用户数据目录物理隔离；实时网络和真实账号测试必须显式选择 live profile，并经过运行时授权。开发模式不绕过权限，热更新也不隐式重放副作用任务。
 
@@ -176,9 +176,9 @@ Rust/TS 绑定从同一个类型合同生成或校验，分别测试数值范围
 
 ## 12. 官方参考与证据范围
 
-以下查阅于 2026-10-19，只证明上游存在对应路径，不证明 TokenMe 已集成：
+以下查阅于 2026-10-19，只证明上游存在对应路径，不证明 kimo-token 已集成：
 
 - [Bytecode Alliance：Rust component](https://component-model.bytecodealliance.org/language-support/building-a-simple-component/rust.html)：原生 Rust 目标及绑定生成路径。
 - [Bytecode Alliance：JavaScript/TypeScript component](https://component-model.bytecodealliance.org/language-support/building-a-simple-component/javascript.html)：TS 先转 JS，组件化及生成类型的工具路径。
 - [WIT Reference](https://component-model.bytecodealliance.org/design/wit.html)：接口合同语言，与业务实现语言区分。
-- [jco 官方仓库](https://github.com/bytecodealliance/jco)：JS 组件相关工具；不意味着任意 Node 模块可直接作为 TokenMe 插件执行。
+- [jco 官方仓库](https://github.com/bytecodealliance/jco)：JS 组件相关工具；不意味着任意 Node 模块可直接作为 kimo-token 插件执行。

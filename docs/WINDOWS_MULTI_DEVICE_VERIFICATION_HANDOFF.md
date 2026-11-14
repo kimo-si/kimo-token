@@ -1,4 +1,4 @@
-# TokenMe Windows 多设备验证交接单
+# kimo-token Windows 多设备验证交接单
 
 > 目标：让 Windows 客户端完成 **Windows 原生** 和 **跨平台真实网络** 验证，并回传可复核证据。
 >
@@ -31,7 +31,7 @@
 记录以下信息，回传时不要附带密码、私钥、完整邀请 URL 或 invite secret：
 
 - Windows 版本、架构、补丁级别（Windows 10/11 x64）。
-- TokenMe 版本、Git commit（若从安装包测试则记录安装包文件名和 SHA-256）。
+- kimo-token 版本、Git commit（若从安装包测试则记录安装包文件名和 SHA-256）。
 - 安装模式：只为当前用户，或所有用户。两种模式分别验证，不要在未卸载的情况下互相覆盖。
 - Windows 用户是否为普通用户；管理员权限只用于确认安装和防火墙提示。
 - 对端设备和系统：macOS、Ubuntu 版本及实际局域网地址。地址回传时可遮盖最后一段。
@@ -39,21 +39,21 @@
 
 ### 2.2 使用已构建安装包
 
-优先使用 Gitea 提供的最新安装包，安装后确认任务管理器中的进程为 `TokenMe.exe`，并确认没有同时运行旧版 `tokenme.exe`、`tokenme-bar.exe` 或第二份 TokenMe。
+优先使用 Gitea 提供的最新安装包，安装后确认任务管理器中的进程为 `kimo-token.exe`，并确认没有同时运行旧版 `kimo-token.exe`、`kimo-token-bar.exe` 或第二份 kimo-token。
 
 ### 2.3 从源码构建（需要时）
 
 在 Windows 工作区执行：
 
 ```powershell
-Set-Location apps/tokenme-bar
+Set-Location apps/kimo-token-bar
 pnpm tauri build --bundles nsis
 ```
 
 预期产物：
 
 ```text
-apps/tokenme-bar/src-tauri/target/release/bundle/nsis/TokenMe_<version>_x64-setup.exe
+apps/kimo-token-bar/src-tauri/target/release/bundle/nsis/kimo_token_<version>_x64-setup.exe
 ```
 
 构建前必须准备仓库要求的 collector 资源和 Zig/cargo-zigbuild；如果构建因工具链缺失失败，回传完整命令和退出码，不要修改协议或放宽安全门来“通过”。
@@ -66,11 +66,11 @@ apps/tokenme-bar/src-tauri/target/release/bundle/nsis/TokenMe_<version>_x64-setu
 
 | 内容 | 默认位置 |
 | --- | --- |
-| 用量索引 | `%LOCALAPPDATA%\tokenme\index.db` |
-| SQLite 辅助文件 | `%LOCALAPPDATA%\tokenme\index.db-wal`、`index.db-shm`（存在时） |
-| 同步身份、证书、outbox、配置 | `%LOCALAPPDATA%\tokenme\device-sync\` |
-| 面板日志 | `%LOCALAPPDATA%\tokenme\logs\panel.log` |
-| 设置 | `%APPDATA%\tokenme\settings.json` |
+| 用量索引 | `%LOCALAPPDATA%\kimo-token\index.db` |
+| SQLite 辅助文件 | `%LOCALAPPDATA%\kimo-token\index.db-wal`、`index.db-shm`（存在时） |
+| 同步身份、证书、outbox、配置 | `%LOCALAPPDATA%\kimo-token\device-sync\` |
+| 面板日志 | `%LOCALAPPDATA%\kimo-token\logs\panel.log` |
+| 设置 | `%APPDATA%\kimo-token\settings.json` |
 
 不要把这些文件上传到公共位置。证据包只应包含脱敏后的 ACL、文件名、时间戳和日志片段。
 
@@ -80,7 +80,7 @@ apps/tokenme-bar/src-tauri/target/release/bundle/nsis/TokenMe_<version>_x64-setu
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$Data = Join-Path $env:LOCALAPPDATA 'tokenme'
+$Data = Join-Path $env:LOCALAPPDATA 'kimo-token'
 $Sync = Join-Path $Data 'device-sync'
 Get-Acl $Data | Format-List Path,Owner,AccessToString
 Get-Acl $Sync | Format-List Path,Owner,AccessToString
@@ -107,7 +107,7 @@ fsutil reparsepoint query $Sync
 `sync stop/status` 的 Windows 实现使用按数据库路径派生的用户私有 named pipe，DACL 只授予当前 token SID，并设置 `PIPE_REJECT_REMOTE_CLIENTS`；不得把控制面退化为公开 TCP 端口。已完成本机验证：长驻 10 秒后仍可 `status`/`stop`，启动期间延迟连接可重试，`cargo test -p usage-cli` 的 Windows 控制面测试通过，安装包内 CLI 的 `sync status --json` 返回正常。仍需以下真实环境验证：
 
 1. 以普通用户启动从端 runtime。
-2. 以同一用户执行 `tokenme sync status` 和 `tokenme sync stop`，确认能读状态并停止。
+2. 以同一用户执行 `kimo-token sync status` 和 `kimo-token sync stop`，确认能读状态并停止。
 3. 以另一低权限用户执行同样命令，必须被拒绝，且不能影响第一用户的 runtime。
 4. runtime 异常退出后重新执行 `sync run`，确认旧 pipe 被清理，不能卡在“已运行”。
 5. 退出/重启过程中不要删除 identity、outbox 或待传数据。
@@ -118,7 +118,7 @@ fsutil reparsepoint query $Sync
 
 ### 4.1 启动、监听和邀请
 
-在 TokenMe 面板进入“设备同步”：
+在 kimo-token 面板进入“设备同步”：
 
 1. 选择“主设备”。
 2. 选择实际 LAN/VPN 网卡或填写明确的监听地址；允许局域网时不能使用 loopback。
@@ -257,7 +257,7 @@ windows-sync-<date>/
 请按下面格式回传，不要只说“可以/不可以”：
 
 ```text
-TokenMe version:
+kimo-token version:
 Git commit or installer SHA256:
 Windows version/arch:
 Install mode: per-user | all-users

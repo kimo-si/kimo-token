@@ -8,7 +8,7 @@
 //! Cola keeps its coding transcripts in `~/.cola/sessions/<name>/<ISO>_<uuid>.jsonl`
 //! in exactly that shape, so it is registered here as a sibling that shares this
 //! record parser rather than being given a copy of it (see [`paths::COLA`] for
-//! what differs, and why its env override is tokenme's own).
+//! what differs, and why its env override is kimo-token's own).
 //!
 //! The public surface (`TOOL_ID`, `PiAdapter`, this trait impl) is frozen:
 //! `usage-adapter-all` and the CLI already link against it.

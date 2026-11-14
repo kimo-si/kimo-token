@@ -2,7 +2,7 @@
 use std::{collections::BTreeMap, env, fs, path::Path, sync::{Arc, atomic::{AtomicBool, Ordering}}, thread, time::{Duration, SystemTime, UNIX_EPOCH}};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use tokenme_plugin_sdk_reference::{TaskResult, UsageFact, HOST_API};
+use kimo_token_plugin_sdk_reference::{TaskResult, UsageFact, HOST_API};
 use wasmtime::{component::{Component, Linker}, Config, Engine, Store, StoreLimits, StoreLimitsBuilder, Trap};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
@@ -44,7 +44,7 @@ impl HostState {
         if self.logs.len() >= 1000 { return; }
         self.sequence += 1;
         self.logs.push(json!({
-            "schema_version":"tokenme.plugin-log/v1alpha1", "sequence":self.sequence,
+            "schema_version":"kimo-token.plugin-log/v1alpha1", "sequence":self.sequence,
             "plugin_id":self.manifest["id"], "plugin_version":self.manifest["version"],
             "module_sha256":self.module_hash, "task_id":self.task["id"],
             "task_run_id":format!("reference-{}",self.run), "trace_id":self.trace,
@@ -58,9 +58,9 @@ impl HostState {
     }
 }
 
-impl tokenme::plugin::host::Host for HostState {
+impl kimo_token::plugin::host::Host for HostState {
     fn now_ms(&mut self) -> u64 { self.fixture["nowMs"].as_u64().unwrap_or(0) }
-    fn http(&mut self, endpoint_id: String) -> Result<tokenme::plugin::host::HttpResponse, String> {
+    fn http(&mut self, endpoint_id: String) -> Result<kimo_token::plugin::host::HttpResponse, String> {
         if self.deny_http || !self.permitted("endpoints", &endpoint_id) {
             self.event("host.call.denied", "http", Some("PERMISSION.DENIED"), json!({"service":"http"}));
             return Err("PERMISSION.DENIED".into());
@@ -71,7 +71,7 @@ impl tokenme::plugin::host::Host for HostState {
         let body = serde_json::to_string(&response["body"]).map_err(|_| "FIXTURE.INVALID")?;
         if body.len() > 1024 * 1024 { return Err("IO.RESPONSE_LIMIT".into()); }
         self.event("http.end", "http", None, json!({"endpoint_id":endpoint_id,"status":status}));
-        Ok(tokenme::plugin::host::HttpResponse { status, body })
+        Ok(kimo_token::plugin::host::HttpResponse { status, body })
     }
     fn read_source(&mut self, source_id: String, cursor: Option<String>) -> Result<String, String> {
         if !self.permitted("sources", &source_id) {
@@ -119,7 +119,7 @@ impl Ledger {
                 }
                 staged.insert(event.occurrence_id.clone(), event.clone());
             }
-            staged.values().try_fold(0u64, |n,e| n.checked_add(e.total()?).filter(|v| *v <= tokenme_plugin_sdk_reference::MAX_SAFE_INTEGER).ok_or_else(|| "DATA.NUMBER_RANGE".to_string()))?;
+            staged.values().try_fold(0u64, |n,e| n.checked_add(e.total()?).filter(|v| *v <= kimo_token_plugin_sdk_reference::MAX_SAFE_INTEGER).ok_or_else(|| "DATA.NUMBER_RANGE".to_string()))?;
             self.facts = staged;
             self.accepted += accepted; self.duplicates += duplicates; self.updated += updated;
         }

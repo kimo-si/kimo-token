@@ -605,6 +605,17 @@ impl Index {
         scope: &MachineScope,
         exclude_origins: &[String],
     ) -> Result<ReportFacts> {
+        self.report_facts_filtered(plan, scope, exclude_origins, None)
+    }
+
+    // 在报告聚合前限制厂商，最近会话在 SQL 的 LIMIT 之前过滤。
+    pub fn report_facts_filtered(
+        &mut self,
+        plan: &AggregatePlan,
+        scope: &MachineScope,
+        exclude_origins: &[String],
+        tool: Option<&str>,
+    ) -> Result<ReportFacts> {
         let mut facts = ReportFacts::default();
         // Lazy build: only when there is something to build from and nothing to
         // build into. Any other state is already consistent.
@@ -623,12 +634,18 @@ impl Index {
         facts.live = self.fetch_live(plan)?;
         facts.calls = self.fetch_calls(plan)?;
         facts.quotas = self.fetch_quotas(plan.now_ms)?;
-        facts.sessions = self.fetch_sessions(plan.recent_session_limit, scope, exclude_origins)?;
+        facts.sessions = self.fetch_sessions(plan.recent_session_limit, scope, exclude_origins, tool)?;
         facts.syncs = self.fetch_syncs()?;
+        if let Some(tool) = tool {
+            facts.rollup.retain(|row| row.tool == tool);
+            facts.live.retain(|row| row.tool == tool);
+            facts.calls.retain(|row| row.tool == tool);
+            facts.quotas.retain(|row| row.tool == tool);
+        }
         Ok(facts)
     }
 
-    /// The `sync:linux:<origin>` records `tokenme import` leaves in `meta`,
+    /// The `sync:linux:<origin>` records `kimo-token import` leaves in `meta`,
     /// newest first. A malformed record is skipped (one bad row must not kill
     /// the badge) — the write side owns the shape and writes in-transaction,
     /// so this is defense against a hand-edited index, not against ourselves.
@@ -961,7 +978,7 @@ impl Index {
     /// queries by `origin` (rollup) or the source prefix (event). Detached
     /// origins get the same treatment — the `NOT IN` keeps them below the
     /// LIMIT, where a post-hoc filter could only shorten the list.
-    fn fetch_sessions(&self, limit: usize, scope: &MachineScope, exclude_origins: &[String]) -> Result<Vec<SessionFact>> {
+    fn fetch_sessions(&self, limit: usize, scope: &MachineScope, exclude_origins: &[String], tool: Option<&str>) -> Result<Vec<SessionFact>> {
         let (origin, all): (&str, bool) = match scope {
             MachineScope::All => ("", true),
             MachineScope::Local => ("", false),
@@ -970,11 +987,11 @@ impl Index {
         let mut top_sql = String::from(
             "SELECT origin, tool, session, MIN(min_ts), MAX(max_ts) \
              FROM event_rollup \
-             WHERE (?2 = 1 OR origin = ?3)",
+             WHERE (?2 = 1 OR origin = ?3) AND (?4 IS NULL OR tool = ?4)",
         );
         if !exclude_origins.is_empty() {
             let placeholders = (0..exclude_origins.len())
-                .map(|i| format!("?{}", i + 4))
+                .map(|i| format!("?{}", i + 5))
                 .collect::<Vec<_>>()
                 .join(", ");
             top_sql.push_str(&format!(" AND origin NOT IN ({placeholders})"));
@@ -987,7 +1004,8 @@ impl Index {
         );
         let mut top = self.conn.prepare(&top_sql).map_err(sql_err)?;
         let mut bind: Vec<rusqlite::types::Value> =
-            vec![(limit.max(1) as i64).into(), (all as i64).into(), origin.to_string().into()];
+            vec![(limit.max(1) as i64).into(), (all as i64).into(), origin.to_string().into(),
+                 tool.map(|id| id.to_owned().into()).unwrap_or(rusqlite::types::Value::Null)];
         bind.extend(exclude_origins.iter().map(|excluded| excluded.clone().into()));
         let heads: Vec<(String, String, String, i64, i64)> = top
             .query_map(params_from_iter(bind), |r| {
@@ -1463,6 +1481,26 @@ mod golden {
 
     fn plan() -> AggregatePlan {
         AggregatePlan::build(now_fixture(), 3)
+    }
+
+    // 旧索引里的更新会话不能盖住 Codex，混合用量也不能进入报告总计。
+    #[test]
+    fn tool_filter_applies_before_recent_limit_and_report_totals() {
+        let now = now_fixture();
+        let events = vec![
+            ev("codex", now - 2000, "codex-turn", None, None, counts(42.0)),
+            ev("claude", now - 1000, "newer-turn", None, None, counts(100.0)),
+        ];
+        let mut index = Index::open_in_memory().unwrap();
+        raw_insert(&index, &events);
+        let plan = AggregatePlan::build(now, 1);
+        let facts = index.report_facts_filtered(&plan, &MachineScope::All, &[], Some("codex")).unwrap();
+        let price_table = pricing();
+        let report = summarize_facts(&facts, &ReportOptions::new(&price_table).with_now(now));
+        assert_eq!(report.recent_sessions[0].tool, "codex");
+        assert_eq!(report.day.summary.total_tokens, 42.0);
+        assert_eq!(report.all_time.total_tokens, 42.0);
+        assert_eq!(index.per_tool_counts().unwrap().len(), 2);
     }
 
     // ---- the comparator ----

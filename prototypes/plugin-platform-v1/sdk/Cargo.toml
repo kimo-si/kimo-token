@@ -1,5 +1,5 @@
 [package]
-name = "tokenme-plugin-sdk-reference"
+name = "kimo-token-plugin-sdk-reference"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

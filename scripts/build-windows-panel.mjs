@@ -6,7 +6,7 @@ import { archive } from "./archive-windows-build.mjs";
 import { repoRoot } from "./prepare-windows-diagnostics.mjs";
 
 if (process.platform !== "win32") throw new Error("Run this Windows panel builder on Windows.");
-const app = join(repoRoot, "apps/tokenme-bar");
+const app = join(repoRoot, "apps/kimo-token-bar");
 const cli = join(app, "node_modules/@tauri-apps/cli/tauri.js");
 const args = process.argv.slice(2);
 const child = spawn(process.execPath, [cli, "build", ...args], { cwd: app, stdio: ["inherit", "pipe", "pipe"], windowsHide: true });

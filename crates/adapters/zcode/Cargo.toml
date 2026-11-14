@@ -3,7 +3,7 @@ name = "usage-adapter-zcode"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "tokenme source adapter: zcode"
+description = "kimo-token source adapter: zcode"
 
 [dependencies]
 usage-core.workspace = true

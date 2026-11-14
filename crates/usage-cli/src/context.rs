@@ -130,7 +130,7 @@ pub fn build(g: &Global) -> Result<Ctx, Fail> {
     if healed {
         eprintln!(
             "warning: the index image failed its integrity check; it was moved aside as \
-             *.corrupt-<timestamp> and recreated empty — run `tokenme ingest` to refill it"
+             *.corrupt-<timestamp> and recreated empty — run `kimo-token ingest` to refill it"
         );
     }
 
@@ -183,13 +183,15 @@ impl Ctx {
     /// table can say *why* a tool is missing.
     pub fn detect(&self) -> (Vec<DetectedSource>, Vec<String>) {
         let mut problems = Vec::new();
-        let registry = catch_unwind(AssertUnwindSafe(usage_adapter_all::detect_all));
-        if let Ok(detected) = registry {
-            if !detected.is_empty() {
-                return (detected, problems);
+        if self.g.tool.is_empty() {
+            let registry = catch_unwind(AssertUnwindSafe(usage_adapter_all::detect_all));
+            if let Ok(detected) = registry {
+                if !detected.is_empty() {
+                    return (detected, problems);
+                }
             }
+            problems.extend(take_panics());
         }
-        problems.extend(take_panics());
 
         let mut out = Vec::new();
         for adapter in &self.adapters {
@@ -254,19 +256,19 @@ impl Ctx {
             Ok(r) => r,
             Err(e) => {
                 if !self.quiet() {
-                    eprintln!("tokenme: ingest failed ({e}); reporting from the existing index");
+                    eprintln!("kimo-token: ingest failed ({e}); reporting from the existing index");
                 }
                 return None;
             }
         };
         for err in self.index.errors() {
             if !self.quiet() {
-                eprintln!("tokenme: {err}");
+                eprintln!("kimo-token: {err}");
             }
         }
         if self.g.verbose && !self.g.json && !self.quiet() {
             eprintln!(
-                "tokenme: ingested {} new event(s) from {}/{} file(s) in {}ms",
+                "kimo-token: ingested {} new event(s) from {}/{} file(s) in {}ms",
                 report.new_events, report.files_changed, report.files_scanned, report.took_ms
             );
         }
@@ -390,7 +392,7 @@ impl Ctx {
 pub fn print_json<T: serde::Serialize>(value: &T) {
     let mut out = std::io::stdout().lock();
     if serde_json::to_writer(&mut out, value).is_err() {
-        eprintln!("tokenme: failed to serialise the report");
+        eprintln!("kimo-token: failed to serialise the report");
         std::process::exit(1);
     }
     let _ = std::io::Write::write_all(&mut out, b"\n");

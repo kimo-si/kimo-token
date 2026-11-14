@@ -1196,7 +1196,7 @@ impl HttpsSyncServer {
         let listener = TcpListener::bind(config.bind_addr).map_err(|error| {
             if error.kind() == io::ErrorKind::AddrInUse {
                 TransportError::Config(format!(
-                    "sync port {} is already in use; stop the other TokenMe sync service or choose a different port",
+                    "sync port {} is already in use; stop the other kimo-token sync service or choose a different port",
                     config.bind_addr.port(),
                 ))
             } else {
@@ -1482,7 +1482,7 @@ impl ServerContext {
         if let Some(sink) = sink {
             sink(is_error, message);
         } else if is_error {
-            eprintln!("tokenme sync: {message}");
+            eprintln!("kimo-token sync: {message}");
         }
     }
 
@@ -1671,7 +1671,7 @@ impl ServerContext {
             None => "peer did not announce a sync protocol version".into(),
         };
         let message = format!(
-            "this TokenMe requires sync protocol {WIRE_VERSION_MAJOR}.{WIRE_VERSION_MINOR}; {detail}. Update TokenMe on the other machine."
+            "this kimo-token requires sync protocol {WIRE_VERSION_MAJOR}.{WIRE_VERSION_MINOR}; {detail}. Update kimo-token on the other machine."
         );
         self.log_event(false, &format!("sync: action=connection outcome=wire_rejected {detail}"));
         self.respond_and_close(tls, 426, &message, WIRE_REJECT_DRAIN_BYTES)
@@ -1950,35 +1950,7 @@ pub struct RollupRow {
 /// frame. The caller gates pairing status on the authenticated session
 /// before calling; the read itself touches only the index.
 pub(crate) fn primary_local_rollup_snapshot(store: &SyncStore) -> SyncResult<RollupSnapshot> {
-    // `event_rollup.origin` is the materialized ORIGIN_SQL of each event's
-    // source (usage_index folds it in at ingest time), so the primary's own
-    // rows are exactly `origin = ''`; merged bundle imports carry their
-    // bundle origin and never travel this wire.
-    let mut statement = store.index().conn().prepare(
-        "SELECT day, origin, tool, session, project, model, meter, in_tok, cc_tok, cr_tok, out_tok, reason_tok, credits, n, nonzero, min_ts, max_ts FROM event_rollup WHERE origin = ''",
-    ).map_err(|e| SyncError::Sqlite(e.to_string()))?;
-    let rows = statement.query_map([], |row| Ok(RollupRow {
-        day: row.get(0)?,
-        origin: row.get(1)?,
-        tool: row.get(2)?,
-        session: row.get(3)?,
-        project: row.get(4)?,
-        model: row.get(5)?,
-        meter: row.get(6)?,
-        in_tok: row.get(7)?,
-        cc_tok: row.get(8)?,
-        cr_tok: row.get(9)?,
-        out_tok: row.get(10)?,
-        reason_tok: row.get(11)?,
-        credits: row.get(12)?,
-        n: row.get(13)?,
-        nonzero: row.get(14)?,
-        min_ts: row.get(15)?,
-        max_ts: row.get(16)?,
-    })).map_err(|e| SyncError::Sqlite(e.to_string()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| SyncError::Sqlite(e.to_string()))?;
-    Ok(RollupSnapshot { origin: usage_index::hostname(), rows })
+    Ok(RollupSnapshot { origin: usage_index::hostname(), rows: store.local_rollup_snapshot()? })
 }
 
 /// The only POST dispatch left: the pre-trust pairing one-shot. Everything
@@ -2339,16 +2311,16 @@ fn validate_response_wire(status: u16, wire_version: Option<(u16, u16)>, body: &
     if status == 100 { return Ok(()); }
     if status == 426 {
         let message = serde_json::from_slice::<WireError>(body).map(|error| error.message)
-            .unwrap_or_else(|_| "update TokenMe on the other machine".into());
+            .unwrap_or_else(|_| "update kimo-token on the other machine".into());
         return Err(TransportError::Unsupported(message));
     }
     match wire_version {
         Some((major, _)) if major == WIRE_VERSION_MAJOR => Ok(()),
         Some((major, minor)) => Err(TransportError::Unsupported(format!(
-            "peer speaks sync protocol {major}.{minor}; this build requires {WIRE_VERSION_MAJOR}.{WIRE_VERSION_MINOR} — update TokenMe on the other machine"
+            "peer speaks sync protocol {major}.{minor}; this build requires {WIRE_VERSION_MAJOR}.{WIRE_VERSION_MINOR} — update kimo-token on the other machine"
         ))),
         None => Err(TransportError::Unsupported(format!(
-            "peer did not announce sync protocol {WIRE_VERSION_MAJOR}.{WIRE_VERSION_MINOR}; update TokenMe on the other machine"
+            "peer did not announce sync protocol {WIRE_VERSION_MAJOR}.{WIRE_VERSION_MINOR}; update kimo-token on the other machine"
         ))),
     }
 }
@@ -2492,7 +2464,7 @@ mod tests {
     }
 
     fn server_config(cert: &CertFixture) -> HttpsServerConfig {
-        HttpsServerConfig { bind_addr: "127.0.0.1:0".parse().unwrap(), certificate_der: cert.cert_der.clone(), private_key_der: cert.key_der.clone(), allow_lan: false, allowed_peer_ips: vec![], max_body_bytes: DEFAULT_BODY_BYTES, max_concurrent: 1, staging_dir: std::env::temp_dir().join(format!("tokenme-sync-test-{}-{}", std::process::id(), now_ms())), idle_timeout: DEFAULT_IDLE_TIMEOUT, total_timeout: DEFAULT_TOTAL_TIMEOUT, staging_quota_bytes: DEFAULT_STAGING_QUOTA_BYTES }
+        HttpsServerConfig { bind_addr: "127.0.0.1:0".parse().unwrap(), certificate_der: cert.cert_der.clone(), private_key_der: cert.key_der.clone(), allow_lan: false, allowed_peer_ips: vec![], max_body_bytes: DEFAULT_BODY_BYTES, max_concurrent: 1, staging_dir: std::env::temp_dir().join(format!("kimo-token-sync-test-{}-{}", std::process::id(), now_ms())), idle_timeout: DEFAULT_IDLE_TIMEOUT, total_timeout: DEFAULT_TOTAL_TIMEOUT, staging_quota_bytes: DEFAULT_STAGING_QUOTA_BYTES }
     }
 
     fn raw_tls_request(cert: &CertFixture, addr: SocketAddr, request: &[u8]) -> String {
@@ -2538,7 +2510,7 @@ mod tests {
     fn rollup_rows(count: usize) -> Vec<RollupRow> {
         (0..count).map(|i| RollupRow {
             day: format!("2026-10-{:02}", 10 + i), origin: String::new(), tool: "codex".into(), session: "session".into(),
-            project: "project-tokenme".into(), model: "gpt-5".into(), meter: "tokens".into(),
+            project: "project-kimo-token".into(), model: "gpt-5".into(), meter: "tokens".into(),
             in_tok: 100.0, cc_tok: 0.0, cr_tok: 0.0, out_tok: 50.0, reason_tok: 0.0, credits: 0.0,
             n: 3, nonzero: 2, min_ts: 1_000 + i as i64, max_ts: 2_000 + i as i64,
         }).collect()
@@ -2728,7 +2700,7 @@ mod tests {
 
     #[test]
     fn response_wire_version_mismatch_becomes_an_actionable_upgrade_error() {
-        let body = br#"{"message":"update TokenMe on the other machine"}"#;
+        let body = br#"{"message":"update kimo-token on the other machine"}"#;
         assert!(validate_response_wire(200, Some((WIRE_VERSION_MAJOR, 0)), body).is_ok());
         assert!(matches!(validate_response_wire(200, Some((3, 0)), body), Err(TransportError::Unsupported(message)) if message.contains("3.0")));
         assert!(matches!(validate_response_wire(200, None, body), Err(TransportError::Unsupported(message)) if message.contains("did not announce")));
@@ -2881,7 +2853,7 @@ mod tests {
                 allowed_peer_ips: vec![],
                 max_body_bytes: DEFAULT_BODY_BYTES,
                 max_concurrent: 1,
-                staging_dir: std::env::temp_dir().join(format!("tokenme-sync-cancel-http-{}", now_ms())),
+                staging_dir: std::env::temp_dir().join(format!("kimo-token-sync-cancel-http-{}", now_ms())),
                 idle_timeout: DEFAULT_IDLE_TIMEOUT,
                 total_timeout: DEFAULT_TOTAL_TIMEOUT,
                 staging_quota_bytes: DEFAULT_STAGING_QUOTA_BYTES,
@@ -3101,7 +3073,7 @@ mod tests {
                 allowed_peer_ips: vec![],
                 max_body_bytes: DEFAULT_BODY_BYTES,
                 max_concurrent: 1,
-                staging_dir: std::env::temp_dir().join(format!("tokenme-sync-trickle-{}", now_ms())),
+                staging_dir: std::env::temp_dir().join(format!("kimo-token-sync-trickle-{}", now_ms())),
                 idle_timeout: DEFAULT_IDLE_TIMEOUT,
                 total_timeout: DEFAULT_TOTAL_TIMEOUT,
                 staging_quota_bytes: DEFAULT_STAGING_QUOTA_BYTES,

@@ -50,7 +50,7 @@ fn generate_cert() -> CertFixture {
 
 fn staging_path(tag: &str) -> PathBuf {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    std::env::temp_dir().join(format!("tokenme-sim-{tag}-{nanos}-{}", std::process::id()))
+    std::env::temp_dir().join(format!("kimo-token-sim-{tag}-{nanos}-{}", std::process::id()))
 }
 
 fn setup_server_config(cert: &CertFixture, staging_dir: PathBuf, max_concurrent: usize) -> HttpsServerConfig {
@@ -98,7 +98,7 @@ fn rollup_rows_on(month: &str, count: usize) -> Vec<RollupRow> {
             origin: String::new(),
             tool: "codex".into(),
             session: "session".into(),
-            project: "project-tokenme".into(),
+            project: "project-kimo-token".into(),
             model: "gpt-5".into(),
             meter: "tokens".into(),
             in_tok: 100.0,

@@ -5,7 +5,7 @@
 //! plus an `index.json` per workspace that is UI bookkeeping, not usage. The
 //! data dir is Electron's: `%APPDATA%\FunIDE` on Windows, 
 //! `~/Library/Application Support/FunIDE` on macOS. No env override is
-//! documented; `FUNIDE_DATA_DIR` is tokenme's, following the adapters that
+//! documented; `FUNIDE_DATA_DIR` is kimo-token's, following the adapters that
 //! honour their vendors' overrides.
 
 use std::path::PathBuf;

@@ -40,7 +40,7 @@ pub struct ControlServer {
 
 pub fn control_name(db_path: &Path) -> String {
     let digest = usage_device_sync::hash_bytes(db_path.to_string_lossy().as_bytes());
-    format!(r"\\.\pipe\tokenme-secondary-{}", hex_bytes(&digest[..16]))
+    format!(r"\\.\pipe\kimo-token-secondary-{}", hex_bytes(&digest[..16]))
 }
 
 pub fn start(
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn private_pipe_round_trip_and_stop() {
-        let db_path = std::env::temp_dir().join(format!("tokenme-pipe-test-{}\\index.db", std::process::id()));
+        let db_path = std::env::temp_dir().join(format!("kimo-token-pipe-test-{}\\index.db", std::process::id()));
         let name = control_name(&db_path);
         let pipe = create_server(&name).expect("create test pipe");
         let stop = Arc::new(AtomicBool::new(false));
@@ -283,7 +283,7 @@ mod tests {
         let pipe_bits = pipe as usize;
         let join = thread::spawn(move || run_server(name, pipe_bits, server_stop, None));
         thread::sleep(std::time::Duration::from_millis(20));
-        if let Some(ms) = std::env::var("TOKENME_PIPE_TEST_HOLD_MS").ok().and_then(|value| value.parse::<u64>().ok()).filter(|ms| *ms > 0) {
+        if let Some(ms) = std::env::var("KIMO_TOKEN_PIPE_TEST_HOLD_MS").ok().and_then(|value| value.parse::<u64>().ok()).filter(|ms| *ms > 0) {
             println!("pipe: {}", control_name(&db_path));
             thread::sleep(std::time::Duration::from_millis(ms));
         }

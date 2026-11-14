@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$ReleaseOnly,
-    [string]$ToolsRoot = $(if ($env:TOKENME_TOOLS_ROOT) { $env:TOKENME_TOOLS_ROOT } else { "$env:USERPROFILE\tokenme-tools" })
+    [string]$ToolsRoot = $(if ($env:KIMO_TOKEN_TOOLS_ROOT) { $env:KIMO_TOKEN_TOOLS_ROOT } else { "$env:USERPROFILE\kimo-token-tools" })
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,7 +12,7 @@ $cargoExe = Join-Path $cargoHome 'bin\cargo.exe'
 $vsDevCmd = Join-Path $ToolsRoot 'vs-buildtools\Common7\Tools\VsDevCmd.bat'
 
 if (-not (Test-Path -LiteralPath $cargoExe)) {
-    throw "Rust is not installed at $cargoExe. Install the MSVC toolchain under TOKENME_TOOLS_ROOT first."
+    throw "Rust is not installed at $cargoExe. Install the MSVC toolchain under KIMO_TOKEN_TOOLS_ROOT first."
 }
 if (-not (Test-Path -LiteralPath $vsDevCmd)) {
     throw "Visual Studio Build Tools are not installed at $vsDevCmd."
@@ -49,7 +49,7 @@ try {
     if (-not $ReleaseOnly) {
         Invoke-Cargo @('test', '--workspace', '--all-targets')
     }
-    & (Join-Path $repoRoot 'target\release\tokenme.exe') '--help'
+    & (Join-Path $repoRoot 'target\release\kimo-token.exe') '--help'
     if ($LASTEXITCODE -ne 0) {
         throw "The Windows CLI smoke test failed with exit code $LASTEXITCODE."
     }

@@ -1,10 +1,10 @@
-# TokenMe 架构
+# kimo-token 架构
 
 > 版本：0.1.8 · 更新：2026-10-13 · 读者：贡献者 · [English](ARCHITECTURE_EN.md)
 
 ## 一段话总览
 
-每款受支持的 AI 工具都把日志写在自己本机；TokenMe 在「统计用量」这件事上从不与厂商通信。每工具一个适配器把各自的日志归一成同一种 `UsageEvent`，增量 SQLite 索引负责摄取（字节游标、去重键、保留期），`usage-core` 把事件折算成金额与时间窗——既可以在内存里全量算，也可以读索引自己维护的 `event_rollup` 缓存。两个前端——CLI（macOS、Linux、Windows）与菜单栏面板（macOS、Windows）——从同一个索引渲染同一批数字。服务器与容器上的用量经同步 bundle 并入同一索引（每个来源一个机器视图）；TTFT/速度是第二条独立信号通道，默认关闭，开了也只采本机。
+每款受支持的 AI 工具都把日志写在自己本机；kimo-token 在「统计用量」这件事上从不与厂商通信。每工具一个适配器把各自的日志归一成同一种 `UsageEvent`，增量 SQLite 索引负责摄取（字节游标、去重键、保留期），`usage-core` 把事件折算成金额与时间窗——既可以在内存里全量算，也可以读索引自己维护的 `event_rollup` 缓存。两个前端——CLI（macOS、Linux、Windows）与菜单栏面板（macOS、Windows）——从同一个索引渲染同一批数字。服务器与容器上的用量经同步 bundle 并入同一索引（每个来源一个机器视图）；TTFT/速度是第二条独立信号通道，默认关闭，开了也只采本机。
 
 ## Crate 地图
 
@@ -15,8 +15,8 @@
 | `crates/usage-device-sync` | 独立严格入口：Ed25519 identity、配对/stream/epoch、签名包、receipt/highwater、确定性 merge，以及受限 HTTPS over TCP/TLS 1.3 transport；不改变旧 JSONL/SSH importer |
 | `crates/usage-quota` | 实时厂商配额探针（一个 provider 一个文件），共享一个 5 分钟 TTL、每工具一份缓存文件；每日签到与令牌续期也在这里；`copilot` 与 `gemini` 是纯探针，没有用量适配器 |
 | `crates/adapters/<tool>` | 22 个工具族 crate，注册表共 30 个工具；8 个兄弟产品复用既有 crate 的解析器（crow5、mimocode、opendesign 寄在 `opencode`，cola、omp 寄在 `pi`，qoder_cn 寄在 `qoder`，workbuddy_cn 寄在 `workbuddy`，trae_cn 寄在 `trae`） || `crates/adapters/all` | 注册表：`TOOL_IDS`、`detect_all`、`builtin_adapters`，外加编译期交叉核对——四个源码家的版本号与编译版本一致、`latest.json` 自洽（可以滞后，不许串版）、面板 `TOOL_ORDER` 不漏工具、CHANGELOG 每个已发布版本有分节 |
-| `crates/usage-cli` | `tokenme` CLI：`detect` / `daily` / `weekly` / `monthly` / `report` / `sessions` / `quota` / `index --rebuild|--prune|--force` / `export` / `import` / `budget` / `pricing` / `icons`，外加 `dsh-doctor`、`codex-doctor`、`workbuddy-login` |
-| `apps/tokenme-bar` | Tauri 2 菜单栏面板（前端 `src/`，Rust 在 `src-tauri/`）：概览/工具/排行/明细/速度五页，服务器与设置浮层，托盘，桌宠 |
+| `crates/usage-cli` | `kimo-token` CLI：`detect` / `daily` / `weekly` / `monthly` / `report` / `sessions` / `quota` / `index --rebuild|--prune|--force` / `export` / `import` / `budget` / `pricing` / `icons`，外加 `dsh-doctor`、`codex-doctor`、`workbuddy-login` |
+| `apps/kimo-token-bar` | Tauri 2 菜单栏面板（前端 `src/`，Rust 在 `src-tauri/`）：概览/工具/排行/明细/速度五页，服务器与设置浮层，托盘，桌宠 |
 
 ## 数据流
 
@@ -25,10 +25,10 @@ flowchart LR
     A["crates/adapters/*（工具日志）"] --> B["crates/usage-index（SQLite：event + event_rollup）"]
     B --> C["crates/usage-core（summarize / summarize_facts）"]
     C --> D["crates/usage-cli"]
-    C --> E["apps/tokenme-bar engine.rs"]
+    C --> E["apps/kimo-token-bar engine.rs"]
     F["crates/usage-quota（实时探针）"] --> C
     G["crates/usage-core/pricing.rs（models.dev）"] --> C
-    H["同步 bundle（~/tokenme-sync）"] --> B
+    H["同步 bundle（~/kimo-token-sync）"] --> B
     J["严格设备同步：HTTPS/TCP/TLS 1.3"] --> B
     I["TTFT 通道（本地记录 / 仅回环 OTLP）"] --> E
 ```
@@ -41,7 +41,7 @@ flowchart LR
 
 这个循环是被监督的：panic 或意外返回会连同原因写进 `panel.log`，并以封顶退避重启——菜单栏应用一旦停止发布，画面只会安静地停在旧数字上，没有别的征兆。页面自己也报年龄：报表老过五个 cadence（下限五分钟）就在页头显示「数据已停止更新」。cadence 时钟归自己管：文件唤醒只把截止期往近了收，从不往后推，忙碌的日志目录饿不死周期 pass（修复前实测两轮 pass 的间隔被拖到 25–237 秒）。
 
-冷启动的次序保证面板不等它不需要的工作。引擎只开 schema，先把上一轮自己的报表发出去——它在每次发布时镜像到 `<数据目录>/tokenme/report.json`，重新上屏要过 `snapshot::accept` 的诚实门（同作用域、同本地日、一小时以内、时钟没被动过）——然后才扫描任何东西；`Index::verify_integrity`（读全文件的 `PRAGMA quick_check`，170 MB 索引热态 0.4 秒、冷态 3.6 秒）排在首次发布之后、首次写入之前，损坏的库照样在每次启动时隔离重建，但永远不挡在屏幕前面。CLI 把这个检查紧跟在打开之后：它是诊断入口，不是渲染路径。页面这一侧，`index.html` 自带一块绘制前启动壳（与应用加载卡同款标记，配色镜像自上次应用的主题），因为 WebKit 会把未绘制的视图合成一张平板——而「等页面报告了再开窗」替代不了它：本机实测，从不被排到前面的窗口加载页面要 3.5–4.3 秒而不是 1.1–1.6 秒，等待本身会制造它所等待的延迟。`panel.log` 打印预算（`boot: … restore/detect/pricing/index open/has-events/sources/report`，以及 `the page reported content N ms after launch`），慢在哪儿是量出来的，不是吵出来的。
+冷启动的次序保证面板不等它不需要的工作。引擎只开 schema，先把上一轮自己的报表发出去——它在每次发布时镜像到 `<数据目录>/kimo-token/report.json`，重新上屏要过 `snapshot::accept` 的诚实门（同作用域、同本地日、一小时以内、时钟没被动过）——然后才扫描任何东西；`Index::verify_integrity`（读全文件的 `PRAGMA quick_check`，170 MB 索引热态 0.4 秒、冷态 3.6 秒）排在首次发布之后、首次写入之前，损坏的库照样在每次启动时隔离重建，但永远不挡在屏幕前面。CLI 把这个检查紧跟在打开之后：它是诊断入口，不是渲染路径。页面这一侧，`index.html` 自带一块绘制前启动壳（与应用加载卡同款标记，配色镜像自上次应用的主题），因为 WebKit 会把未绘制的视图合成一张平板——而「等页面报告了再开窗」替代不了它：本机实测，从不被排到前面的窗口加载页面要 3.5–4.3 秒而不是 1.1–1.6 秒，等待本身会制造它所等待的延迟。`panel.log` 打印预算（`boot: … restore/detect/pricing/index open/has-events/sources/report`，以及 `the page reported content N ms after launch`），慢在哪儿是量出来的，不是吵出来的。
 
 ## TTFT 与速度（默认关闭）
 
@@ -65,8 +65,8 @@ flowchart LR
 
 `usage-device-sync` 的 focused suite 覆盖协议/状态/迁移/receipt/merge、TLS 1.3 loopback，以及允许 LAN bind 的本机 round-trip；真实跨主机 LAN/VPN 和 Windows ACL 运行时仍需目标平台验证。
 
-每个适配器自带 fixture 驱动的测试（fixture 已匿名——没有真实会话数据），外加一条对账测试：适配器的数字必须与一次独立 SQL 重算一致。索引测试覆盖冷摄取、续读、并行摄取对账与损坏路径：`Index::open` 是廉价句柄，`Index::verify_integrity` 是整库守卫——把损坏的库连同它的 `-wal`/`-shm` 一起挪到一边（重建不能继承它们），交回一个空库给下一轮摄取重新填。注册表自检：`adapters/all` 在版本号各处漂移、`latest.json` 写出与编译树不符的安装包名或哈希、面板 `TOOL_ORDER` 漏掉工具、CHANGELOG 缺当前编译版本的分节时，直接让构建失败。面板的 Rust 是独立 workspace——根目录的 `cargo test --workspace` 看不见它，`apps/tokenme-bar/src-tauri` 下要再跑一次。服务器 e2e 挂 `#[ignore]`，需要真实 sshd 目标，只有 `cargo test --ignored` 会跑。
+每个适配器自带 fixture 驱动的测试（fixture 已匿名——没有真实会话数据），外加一条对账测试：适配器的数字必须与一次独立 SQL 重算一致。索引测试覆盖冷摄取、续读、并行摄取对账与损坏路径：`Index::open` 是廉价句柄，`Index::verify_integrity` 是整库守卫——把损坏的库连同它的 `-wal`/`-shm` 一起挪到一边（重建不能继承它们），交回一个空库给下一轮摄取重新填。注册表自检：`adapters/all` 在版本号各处漂移、`latest.json` 写出与编译树不符的安装包名或哈希、面板 `TOOL_ORDER` 漏掉工具、CHANGELOG 缺当前编译版本的分节时，直接让构建失败。面板的 Rust 是独立 workspace——根目录的 `cargo test --workspace` 看不见它，`apps/kimo-token-bar/src-tauri` 下要再跑一次。服务器 e2e 挂 `#[ignore]`，需要真实 sshd 目标，只有 `cargo test --ignored` 会跑。
 
 ## 发布与分发
 
-版本号住五个家，必须一起动：根 `Cargo.toml`（`[workspace.package]`）、面板 `Cargo.toml`、`tauri.conf.json`、`latest.json`、`apps/tokenme-bar/package.json`；`scripts/release.sh x.y.z` 负责前四个并打 tag（package.json 手动改）。产物按平台分家：GitHub Actions（`release.yml`，tag 触发）构建 macOS 应用 zip 与 DMG、三架构的 Linux musl CLI 压缩包，并更新 Homebrew tap（`tokenme` cask 是面板，`tokenme-cli` formula 是 CLI）；Windows 安装器挂在 Gitea release（私有 forge）上，经 API 手工附上去、正文带 sha256。Windows 安装器自带 CLI 并管理 PATH（「只为我」加用户 PATH，「所有用户」加系统 PATH）。
+版本号住五个家，必须一起动：根 `Cargo.toml`（`[workspace.package]`）、面板 `Cargo.toml`、`tauri.conf.json`、`latest.json`、`apps/kimo-token-bar/package.json`；`scripts/release.sh x.y.z` 负责前四个并打 tag（package.json 手动改）。产物按平台分家：GitHub Actions（`release.yml`，tag 触发）构建 macOS 应用 zip 与 DMG、三架构的 Linux musl CLI 压缩包，并更新 Homebrew tap（`kimo-token` cask 是面板，`kimo-token-cli` formula 是 CLI）；Windows 安装器挂在 Gitea release（私有 forge）上，经 API 手工附上去、正文带 sha256。Windows 安装器自带 CLI 并管理 PATH（「只为我」加用户 PATH，「所有用户」加系统 PATH）。

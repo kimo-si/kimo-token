@@ -6,12 +6,12 @@ __pycache__/
 *.pyc
 
 .DS_Store
-apps/tokenme-bar/src-tauri/target
-apps/tokenme-bar/src-tauri/gen/schemas
+apps/kimo-token-bar/src-tauri/target
+apps/kimo-token-bar/src-tauri/gen/schemas
 
-# dev-only: `tokenme report --json` / `tokenme icons --json` output that ?real=1 renders
-apps/tokenme-bar/report.json
-apps/tokenme-bar/icons.json
+# dev-only: `kimo-token report --json` / `kimo-token icons --json` output that ?real=1 renders
+apps/kimo-token-bar/report.json
+apps/kimo-token-bar/icons.json
 
 # global gitignore excludes apps/; the panel is product code, keep it here
 !apps/

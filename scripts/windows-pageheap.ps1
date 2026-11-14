@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Enable', 'Disable', 'Status')][string]$Mode = 'Status',
-    [ValidateSet('TokenMe-diagnostic.exe')][string]$ImageName = 'TokenMe-diagnostic.exe',
+    [ValidateSet('kimo-token-diagnostic.exe')][string]$ImageName = 'kimo-token-diagnostic.exe',
     [string]$GFlags = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -27,4 +27,4 @@ switch ($Mode) {
     Disable { & $GFlags /p /disable $ImageName }
 }
 if ($LASTEXITCODE -ne 0) { throw 'GFlags failed. Enable/Disable require administrator rights.' }
-if ($Mode -ne 'Status') { Write-Output 'Restart the diagnostic copy for this change to take effect. Normal TokenMe.exe and the CLI are unaffected.' }
+if ($Mode -ne 'Status') { Write-Output 'Restart the diagnostic copy for this change to take effect. Normal kimo-token.exe and the CLI are unaffected.' }

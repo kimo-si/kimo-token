@@ -5,7 +5,7 @@
 //! the vendor's unmodified billing payload — prompt/completion tokens, the cache
 //! hit and write, the thinking sub-split, and `credit` for that one call — so
 //! this tool meters like every other one in the index: [`Meter::Tokens`] events
-//! with a credit column riding along, priced centrally by tokenme.
+//! with a credit column riding along, priced centrally by kimo-token.
 //!
 //! Sub-agents are not a separate product: their transcripts sit under the
 //! spawning session's directory and their credit belongs to it, which is the only

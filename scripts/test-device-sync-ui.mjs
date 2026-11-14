@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // Start `pnpm exec vite preview --host 127.0.0.1 --port 4175` after pnpm build.
 // Install playwright-core in a QA tools directory and set
-// TOKENME_PLAYWRIGHT_MODULE to its absolute module entry path when necessary.
+// KIMO_TOKEN_PLAYWRIGHT_MODULE to its absolute module entry path when necessary.
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const { chromium } = require(process.env.TOKENME_PLAYWRIGHT_MODULE || "playwright-core");
-const baseUrl = process.env.TOKENME_QA_URL || "http://127.0.0.1:4175";
+const { chromium } = require(process.env.KIMO_TOKEN_PLAYWRIGHT_MODULE || "playwright-core");
+const baseUrl = process.env.KIMO_TOKEN_QA_URL || "http://127.0.0.1:4175";
 const browser = await chromium.launch({ channel: "msedge", headless: true });
 let passed = 0;
 
@@ -28,7 +28,7 @@ async function scenario(name, options, verify) {
     };
     const qa = window.__QA__ = { state, calls: [], pollStarted: false, reads: 0 };
     const empty = () => ({ ...state, role: "unconfigured", service_running: false, operation_state: "idle", last_error: null, devices: [] });
-    window.__TOKENME_SYNC_STUB__ = async request => {
+    window.__KIMO_TOKEN_SYNC_STUB__ = async request => {
       qa.calls.push(request?.action || "snapshot");
       if (!request) {
         qa.reads++;

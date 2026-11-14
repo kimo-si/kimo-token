@@ -967,7 +967,7 @@ fn claim_state_path() -> Option<PathBuf> {
             return Some(PathBuf::from(file));
         }
     }
-    dirs::config_dir().map(|d| d.join("tokenme").join("quota").join("zcode_claim.json"))
+    usage_core::paths::config_dir().map(|d| d.join("quota").join("zcode_claim.json"))
 }
 
 fn load_claim_state(path: &Path) -> ClaimState {
@@ -2541,7 +2541,7 @@ mod tests {
 
     #[test]
     fn the_claim_ledger_round_trips_through_its_state_file() {
-        let dir = std::env::temp_dir().join(format!("tokenme-zcode-claim-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kimo-token-zcode-claim-test-{}", std::process::id()));
         let file = dir.join("zcode_claim.json");
         std::env::set_var("ZCODE_CLAIM_STATE", &file);
         let path = claim_state_path().expect("the env-pinned path");

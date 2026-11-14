@@ -1,6 +1,6 @@
 # 设计合同的可执行反例
 
-此目录属于设计合同审计，不是已发布的 TokenMe SDK/生产 schema。三个 schema 是发现 Scope、通知配置、UsageFact 的严格投影；verify_contracts.py 以独立数值期望验证关键语义。生产 F01 必须实现同样的 oracle，并扩展为完整合同，不能拿此处模型替代产品代码。
+此目录属于设计合同审计，不是已发布的 kimo-token SDK/生产 schema。三个 schema 是发现 Scope、通知配置、UsageFact 的严格投影；verify_contracts.py 以独立数值期望验证关键语义。生产 F01 必须实现同样的 oracle，并扩展为完整合同，不能拿此处模型替代产品代码。
 
 在隔离仓库根、使用参考工程已锁定的 Python/jsonschema 环境运行：
 

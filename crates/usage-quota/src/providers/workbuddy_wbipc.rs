@@ -202,7 +202,7 @@ impl Connection {
             "protocol_max": PROTOCOL,
             "client_nonce": client_nonce,
             "ticket_id": ticket_id(ticket),
-            "client": {"kind": "cli", "id": "tokenme", "version": env!("CARGO_PKG_VERSION")},
+            "client": {"kind": "cli", "id": "kimo-token", "version": env!("CARGO_PKG_VERSION")},
         }))?;
         let challenge = self.read_frame()?;
         if challenge.get("type")?.as_str()? != "session_challenge" {

@@ -317,11 +317,13 @@ fn an_on_disk_index_reopens_with_its_events() {
     assert_eq!(again.ingest_adapter(&adapter, &DateFilter::default()).unwrap().new_events, 0);
 }
 
+// 验证保留期以及各平台独立应用目录下的索引路径。
 #[test]
 fn retention_and_default_path_look_sane() {
     assert_eq!(RETENTION_DAYS, 750);
     if let Some(path) = Index::default_path() {
-        assert!(path.ends_with("tokenme/index.db") || path.ends_with("tokenme\\index.db"), "{path:?}");
+        let app_dir = if cfg!(target_os = "macos") { "dev.kimo-token.bar" } else { "kimo-token" };
+        assert!(path.ends_with(std::path::Path::new(app_dir).join("index.db")), "{path:?}");
     }
     assert!(Index::open_in_memory().unwrap().path().is_none());
 }

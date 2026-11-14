@@ -548,7 +548,7 @@ mod tests {
         assert_eq!(census.rows_with_cost, 3);
         assert_eq!(census.rows_with_cost_source, 3);
         assert_eq!(census.events, 7, "a cost column is no reason to skip a row");
-        assert!(events.iter().all(|e| e.counts.credits == 0.0), "tokenme prices centrally");
+        assert!(events.iter().all(|e| e.counts.credits == 0.0), "kimo-token prices centrally");
     }
 
     #[test]

@@ -7,21 +7,21 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-function Get-TokenMePathEntry([string]$Entry) {
+function Get-kimoTokenPathEntry([string]$Entry) {
     [Environment]::ExpandEnvironmentVariables($Entry.Trim().Trim('"')).TrimEnd('\', '/')
 }
 
-function Update-TokenMePath([string]$Value, [string]$Bin, [string]$Action) {
-    $normalized = Get-TokenMePathEntry $Bin
+function Update-kimoTokenPath([string]$Value, [string]$Bin, [string]$Action) {
+    $normalized = Get-kimoTokenPathEntry $Bin
     $parts = if ($Value.Length) { $Value.Split(';') } else { @() }
-    $matching = @($parts | Where-Object { (Get-TokenMePathEntry $_) -ieq $normalized })
+    $matching = @($parts | Where-Object { (Get-kimoTokenPathEntry $_) -ieq $normalized })
     if ($Action -eq 'Add') {
         if ($matching.Count) { return $Value }
         if (-not $Value.Length) { return $Bin }
         return "$Value;$Bin"
     }
     # Preserve every other entry verbatim, including unexpanded variables.
-    return (@($parts | Where-Object { (Get-TokenMePathEntry $_) -ine $normalized }) -join ';')
+    return (@($parts | Where-Object { (Get-kimoTokenPathEntry $_) -ine $normalized }) -join ';')
 }
 
 # Dot sourcing exposes the pure transformation for focused checks.
@@ -32,7 +32,7 @@ try {
         throw 'The CLI directory must be an absolute path without semicolons.'
     }
     $Directory = [IO.Path]::GetFullPath($Directory).TrimEnd('\', '/')
-    if ($Mode -eq 'Add' -and -not (Test-Path -LiteralPath (Join-Path $Directory 'tokenme.exe'))) {
+    if ($Mode -eq 'Add' -and -not (Test-Path -LiteralPath (Join-Path $Directory 'kimo-token.exe'))) {
         throw 'The CLI binary is missing; PATH was not changed.'
     }
     $hive = if ($Scope -eq 'Machine') { [Microsoft.Win32.Registry]::LocalMachine } else { [Microsoft.Win32.Registry]::CurrentUser }
@@ -40,7 +40,7 @@ try {
     $key = $hive.CreateSubKey($keyPath)
     try {
         $old = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-        $new = Update-TokenMePath $old $Directory $Mode
+        $new = Update-kimoTokenPath $old $Directory $Mode
         if ($new -ceq $old) { exit 0 }
         $kind = if ($null -ne $key.GetValue('Path')) { $key.GetValueKind('Path') } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
         if ($new.Length) { $key.SetValue('Path', $new, $kind) }
@@ -52,14 +52,14 @@ try {
     Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
-public static class TokenMeEnvironment {
+public static class kimoTokenEnvironment {
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern IntPtr SendMessageTimeout(IntPtr window, uint message,
         UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);
 }
 '@
     $messageResult = [UIntPtr]::Zero
-    [void][TokenMeEnvironment]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'Environment', 2, 2000, [ref]$messageResult)
+    [void][kimoTokenEnvironment]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'Environment', 2, 2000, [ref]$messageResult)
 }
 catch {
     Write-Error $_

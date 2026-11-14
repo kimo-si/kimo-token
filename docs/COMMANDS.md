@@ -1,6 +1,6 @@
-# TokenMe CLI 参考
+# kimo-token CLI 参考
 
-> 版本：0.1.8 · 更新：2026-10-13 · 读者：CLI 用户 · 事实来源：`crates/usage-cli/src/args.rs`（已对照 `tokenme --help` 核实）· [English](COMMANDS_EN.md)
+> 版本：0.1.8 · 更新：2026-10-13 · 读者：CLI 用户 · 事实来源：`crates/usage-cli/src/args.rs`（已对照 `kimo-token --help` 核实）· [English](COMMANDS_EN.md)
 
 所有命令共享以下全局选项（在命令行上任意位置皆可）：
 
@@ -20,7 +20,7 @@
 列出本机找到的每一个受支持的 AI 工具、它的日志根目录与索引状态。
 
 ```bash
-tokenme detect
+kimo-token detect
 ```
 
 ## daily / weekly / monthly
@@ -28,9 +28,9 @@ tokenme detect
 按日/周/月汇总：会话数、token 分级、费用与缓存命中率。
 
 ```bash
-tokenme daily --days 30
-tokenme weekly --weeks 8
-tokenme monthly --months 6
+kimo-token daily --days 30
+kimo-token weekly --weeks 8
+kimo-token monthly --months 6
 ```
 
 | 参数 | 默认 | 说明 |
@@ -42,7 +42,7 @@ tokenme monthly --months 6
 单个时间窗按工具、模型、项目、MCP 服务器或技能拆分，并带上与上一窗的差值。
 
 ```bash
-tokenme report --window week --group model
+kimo-token report --window week --group model
 ```
 
 | 参数 | 取值 |
@@ -55,7 +55,7 @@ tokenme report --window week --group model
 最近的会话列表，逐会话汇总。
 
 ```bash
-tokenme sessions --limit 20
+kimo-token sessions --limit 20
 ```
 
 ## quota
@@ -63,7 +63,7 @@ tokenme sessions --limit 20
 各来源最近一次上报的实时配额样本：滚动 5 小时池、周窗口、积分套餐与重置倒计时。
 
 ```bash
-tokenme quota
+kimo-token quota
 ```
 
 应答由一个共享的 5 分钟 TTL 缓存（`crates/usage-quota/src/lib.rs::TTL`；OS 配置目录下每个工具一个 JSON 文件）。这条命令最多等 30 秒拿实时探测结果——面板只等 5 秒——超时的探测仍会在 6 小时宽限窗内贡献上一次的答案。宿主应用退出后暂停其探测，是面板的 `host_exit_pause` 设置，CLI 不做这件事。
@@ -72,14 +72,14 @@ OpenCode 配额只认官方 Go 端点。密钥查找顺序：`OPENCODE_API_KEY`�
 
 Open Design 配额读 `~/.amr/config.json` 的 `profiles.prod`（`OPEN_DESIGN_HOME` 可改）：控制密钥 `vela_ctrl_…` 依次请求 `/api/v1/workspaces/current` 与 `/api/v1/workspaces/<id>/billing/preflight`，得到 Design Plan 的 5 小时与 7 天额度。运行时密钥 `sk-amr-…` 不能读控制面；钱包余额不是窗口，不进入结果。
 
-大多数探测只读凭据。恰好三家会把轮换后的令牌原子性写回各自的存储：**MiniMax Code**（存住的 access token 距过期不足 2 分钟时，用 `auth.json` 里的 refresh token 换新，遵守厂商自己的锁）、**Kimi Code**（只在 `/usages` 拒绝存量令牌后才换新）、**Cline**（在 gateway 令牌到期前轮换）。其余探测一律不写——磁盘上的 WorkBuddy 凭据来自你亲自跑过的 `tokenme workbuddy-login`，不是探测写的。
+大多数探测只读凭据。恰好三家会把轮换后的令牌原子性写回各自的存储：**MiniMax Code**（存住的 access token 距过期不足 2 分钟时，用 `auth.json` 里的 refresh token 换新，遵守厂商自己的锁）、**Kimi Code**（只在 `/usages` 拒绝存量令牌后才换新）、**Cline**（在 gateway 令牌到期前轮换）。其余探测一律不写——磁盘上的 WorkBuddy 凭据来自你亲自跑过的 `kimo-token workbuddy-login`，不是探测写的。
 
 ## dsh-doctor
 
 DSH 精度审计：把桌面应用自己的投影台账（`tokenUsage`）与索引里的数字并排打印，逐会话给出 `ok`、`MISMATCH`、`v3 stream`、`not indexed`、`indexed but no projection` 之一的 `status`。备注里是如实偏差的结构性原因——继承的 v4 之前事件、活在 `tokenUsage` 之外的子代理开销。无参数。
 
 ```bash
-tokenme dsh-doctor
+kimo-token dsh-doctor
 ```
 
 ## codex-doctor
@@ -87,7 +87,7 @@ tokenme dsh-doctor
 Codex 精度审计：每份 rollout 从头重析（游标归零、不用 manifest、不去重）后按会话聚合，与索引里的总数并排。Codex 没有厂商侧台账，重放就是独立的事实——一行 `MISMATCH` 意味着索引器漏记或重复计数。无参数。
 
 ```bash
-tokenme codex-doctor
+kimo-token codex-doctor
 ```
 
 ## workbuddy-login
@@ -95,7 +95,7 @@ tokenme codex-doctor
 为配额探测登录国内版 WorkBuddy：向厂商要一个 state，在浏览器里走腾讯 SSO，然后轮询最多 5 分钟等令牌。存下的凭据落在 OS 配置目录的 `workbuddy-auth.json`（探测只读它，绝不刷新）；超时则什么都不存。无参数。凭据的域决定版本——国内登录永远不会喂给国际版 WorkBuddy AI 行。装了桌面客户端的机器通常无需额外登录。
 
 ```bash
-tokenme workbuddy-login
+kimo-token workbuddy-login
 ```
 
 ## pricing
@@ -103,18 +103,18 @@ tokenme workbuddy-login
 价格出处：models.dev 上同一个模型常由多家 provider 出售，费用数字只有连同胜出的那条挂牌一起看才有意义。
 
 ```bash
-tokenme pricing explain deepseek-v4-flash   # 谁的挂牌定了价，输家是谁
-tokenme pricing contested --limit 25        # 多家在卖、钱数可观的模型
+kimo-token pricing explain deepseek-v4-flash   # 谁的挂牌定了价，输家是谁
+kimo-token pricing contested --limit 25        # 多家在卖、钱数可观的模型
 ```
 
 ## budget
 
-针对 tokenme 自己算出的费用设支出帽，给厂商不公布上限的工具用。
+针对 kimo-token 自己算出的费用设支出帽，给厂商不公布上限的工具用。
 
 ```bash
-tokenme budget list
-tokenme budget set zcode --daily 5 --monthly 50
-tokenme budget rm zcode
+kimo-token budget list
+kimo-token budget set zcode --daily 5 --monthly 50
+kimo-token budget rm zcode
 ```
 
 单位是美元。`0` 只清空对应的那个窗口。
@@ -124,10 +124,10 @@ tokenme budget rm zcode
 显式驱动索引。
 
 ```bash
-tokenme index --status              # 只看状态，不扫描
-tokenme index --rebuild             # 丢弃并重读保留窗口
-tokenme index --prune               # 清掉早于保留窗口的事件
-tokenme index --force               # 从死进程手里夺回入库租约
+kimo-token index --status              # 只看状态，不扫描
+kimo-token index --rebuild             # 丢弃并重读保留窗口
+kimo-token index --prune               # 清掉早于保留窗口的事件
+kimo-token index --force               # 从死进程手里夺回入库租约
 ```
 
 每条命令打开索引时都会校验镜像（`PRAGMA quick_check`）。损坏的镜像不是一个要你处理的错误：它被挪成 `index.db.corrupt-<timestamp>`（连同 `-wal` / `-shm`，重建不会继承），原地换上一个全新空索引，stderr 打一行 `warning:`，下一轮入库从工具自己的日志重新灌满。完全打不开的文件同样被就地隔离，静默进行，不挡命令。
@@ -138,13 +138,13 @@ tokenme index --force               # 从死进程手里夺回入库租约
 
 ## export
 
-把本机一段窗口的事件导出成同步 bundle（gzip 压缩的 JSONL + 一份带 sha256 与逐工具合计的清单），供别的机器导入。默认落在 `~/tokenme-sync`——菜单栏引擎自动合并的目录——所以 Linux 采集端的全部写入就是一行定时器。导出前先入库最新事件（与所有上报命令相同；`--no-ingest` 可跳过）。安静或无日志的机器也会得到一个合法的空 bundle（`rows 0`）——采集端的定时器绝不在产出少的日子里失败。
+把本机一段窗口的事件导出成同步 bundle（gzip 压缩的 JSONL + 一份带 sha256 与逐工具合计的清单），供别的机器导入。默认落在 `~/kimo-token-sync`——菜单栏引擎自动合并的目录——所以 Linux 采集端的全部写入就是一行定时器。导出前先入库最新事件（与所有上报命令相同；`--no-ingest` 可跳过）。安静或无日志的机器也会得到一个合法的空 bundle（`rows 0`）——采集端的定时器绝不在产出少的日子里失败。
 
 ```bash
-tokenme export                          # 最近 30 天 → ~/tokenme-sync/tokenme-<host>.jsonl.gz
-tokenme export --days 400               # 首次回填：整个保留窗口
-tokenme export --out /tmp/share         # 放到别处（Syncthing 目录、U 盘）
-tokenme export --origin workstation-01  # 固定身份（默认：主机名）
+kimo-token export                          # 最近 30 天 → ~/kimo-token-sync/kimo-token-<host>.jsonl.gz
+kimo-token export --days 400               # 首次回填：整个保留窗口
+kimo-token export --out /tmp/share         # 放到别处（Syncthing 目录、U 盘）
+kimo-token export --origin workstation-01  # 固定身份（默认：主机名）
 ```
 
 `.gz` 经 `*.tmp` + rename 写出，清单最后落盘，传输永远看不到写了一半的 bundle。重复导出同一窗口是安全的：导入幂等。unix 上两个文件一律 `0600`——bundle 记着会话、项目与本地日志路径，默认私有。
@@ -154,21 +154,21 @@ tokenme export --origin workstation-01  # 固定身份（默认：主机名）
 把别的机器导出的 bundle 合并进本地索引。先对照清单验证 sha256 与每个批次的合计，任何失败整体回滚、旧数字原样保留。重复导入同一文件不产生任何变化。
 
 ```bash
-tokenme import ~/tokenme-sync/tokenme-build-01.jsonl.gz
-tokenme import bundle.jsonl.gz --dry-run   # 解析 + 合并 + 对账，然后回滚
+kimo-token import ~/kimo-token-sync/kimo-token-build-01.jsonl.gz
+kimo-token import bundle.jsonl.gz --dry-run   # 解析 + 合并 + 对账，然后回滚
 ```
 
-菜单栏这边通常用不着它：面板引擎每轮自动合并 `~/tokenme-sync`，并按机器显示 **多端同步 / Multi-device sync** 徽标与最近一次合并（超过 24 小时转警示色）。
+菜单栏这边通常用不着它：面板引擎每轮自动合并 `~/kimo-token-sync`，并按机器显示 **多端同步 / Multi-device sync** 徽标与最近一次合并（超过 24 小时转警示色）。
 
 ## sync run / sync stop / sync reset / sync status
 
-`sync pair --invite '<完整 tokenme://device-pair 邀请>'` 是从设备的首选入口。它在证书 pin 校验成功后发送配对请求，并把 endpoint、server name、证书、pin、主设备绑定和本地 identity 路径保存到用户数据目录；普通用户不需要填写 stream 或 generation。批准后，`sync run` 在前台运行唯一的 secondary runtime：每轮先摄取本机事件，再按本机 origin 生成稳定快照，在同一 SQLite 事务中分配 generation/payload revision、写 journal 和不可变 outbox，最后通过 pinned TLS 1.3 上传并 ACK。
+`sync pair --invite '<完整 kimo-token://device-pair 邀请>'` 是从设备的首选入口。它在证书 pin 校验成功后发送配对请求，并把 endpoint、server name、证书、pin、主设备绑定和本地 identity 路径保存到用户数据目录；普通用户不需要填写 stream 或 generation。批准后，`sync run` 在前台运行唯一的 secondary runtime：每轮先摄取本机事件，再按本机 origin 生成稳定快照，在同一 SQLite 事务中分配 generation/payload revision、写 journal 和不可变 outbox，最后通过 pinned TLS 1.3 上传并 ACK。
 
 ```bash
-tokenme sync run       # Ubuntu/Linux/Windows 用户级常驻入口；前台运行，可由 systemd --user 监督
-tokenme sync status    # 查看设备、stream/epoch、运行状态、待传量、最后连接和错误
-tokenme sync stop      # 通过用户私有本地控制通道请求停止，不删除配置或待传 outbox
-tokenme sync reset     # 停止后清除 stream/outbox/ACK 检查点，恢复新 stream 并从零重传/重拉；保留本机事件与配对
+kimo-token sync run       # Ubuntu/Linux/Windows 用户级常驻入口；前台运行，可由 systemd --user 监督
+kimo-token sync status    # 查看设备、stream/epoch、运行状态、待传量、最后连接和错误
+kimo-token sync stop      # 通过用户私有本地控制通道请求停止，不删除配置或待传 outbox
+kimo-token sync reset     # 停止后清除 stream/outbox/ACK 检查点，恢复新 stream 并从零重传/重拉；保留本机事件与配对
 ```
 
 `sync reset` 保留本机用量记录和配对，只清掉与旧 stream 绑定的上传包、journal、generation/ACK 检查点和主端历史下载游标；下一次 `sync run` 通过恢复握手作废旧 stream、换取新 stream，然后重传完整本地快照并从第一条 identity 重新下载主端历史。运行中的 runtime 会先被拒绝，需先 `sync stop`，避免删除它仍在内存中持有的队列。
@@ -180,12 +180,12 @@ Panel 的设备同步面板提供对应的主端启动/停止、证书和邀请�
 
 ## Panel LAN MCP over HTTP
 
-打开 Panel 的“设置 → 高级 → MCP 诊断服务”后，TokenMe 会监听局域网接口并启动标准 MCP HTTP endpoint。面板会自动探测本机局域网 IPv4，并显示可复制的配置，例如：
+打开 Panel 的“设置 → 高级 → MCP 诊断服务”后，kimo-token 会监听局域网接口并启动标准 MCP HTTP endpoint。面板会自动探测本机局域网 IPv4，并显示可复制的配置，例如：
 
 ```json
 {
   "mcpServers": {
-    "tokenme": {
+    "kimo-token": {
       "url": "http://192.168.1.20:<port>/mcp",
       "headers": {
         "Authorization": "Bearer tm_<短期只读凭据>"
@@ -195,13 +195,13 @@ Panel 的设备同步面板提供对应的主端启动/停止、证书和邀请�
 }
 ```
 
-只读配置中的 bearer 由 TokenMe 随机生成，有效期 1 天，只授予 `diagnostics.read`。设置中的“允许局域网 MCP 控制”默认关闭；开启后会生成单独的控制配置和同样有效 1 天的 `sync.control` bearer，控制配置与只读配置必须分别复制或下载，不能混用。控制配置只开放白名单操作，包括 `sync.start_primary`、`sync.stop_primary`、同步角色切换、配对管理和受限面板操作；关闭控制开关会立即撤销控制凭据，关闭只读 MCP 或 TokenMe 退出也会使两类配置失效。该兼容入口仍使用 HTTP，bearer 只能防止未持有配置的请求，不能提供传输保密性；跨不可信网络或需要长期控制时应使用带证书 DER、pin 和 grant 的 HTTPS 诊断配置。
-把这段 JSON 粘贴到同一局域网内另一台电脑上的 Claude、Cursor、Cline 或其他 MCP 客户端即可连接；如果默认端口 `47822` 已被占用，TokenMe 会自动切换到空闲端口，并把实际端口写进配置。关闭开关会停止 endpoint 并撤销 MCP 会话。Windows 防火墙若拦截入站连接，需要允许 TokenMe 使用配置中显示的 TCP 端口。
+只读配置中的 bearer 由 kimo-token 随机生成，有效期 1 天，只授予 `diagnostics.read`。设置中的“允许局域网 MCP 控制”默认关闭；开启后会生成单独的控制配置和同样有效 1 天的 `sync.control` bearer，控制配置与只读配置必须分别复制或下载，不能混用。控制配置只开放白名单操作，包括 `sync.start_primary`、`sync.stop_primary`、同步角色切换、配对管理和受限面板操作；关闭控制开关会立即撤销控制凭据，关闭只读 MCP 或 kimo-token 退出也会使两类配置失效。该兼容入口仍使用 HTTP，bearer 只能防止未持有配置的请求，不能提供传输保密性；跨不可信网络或需要长期控制时应使用带证书 DER、pin 和 grant 的 HTTPS 诊断配置。
+把这段 JSON 粘贴到同一局域网内另一台电脑上的 Claude、Cursor、Cline 或其他 MCP 客户端即可连接；如果默认端口 `47822` 已被占用，kimo-token 会自动切换到空闲端口，并把实际端口写进配置。关闭开关会停止 endpoint 并撤销 MCP 会话。Windows 防火墙若拦截入站连接，需要允许 kimo-token 使用配置中显示的 TCP 端口。
 
 ## diagnostics-stdio
 
 ```bash
-tokenme --db ~/.local/share/tokenme/index.db diagnostics-stdio
+kimo-token --db ~/.local/share/kimo-token/index.db diagnostics-stdio
 ```
 
 启动本机诊断 MCP 的 newline-delimited JSON-RPC stdio host。没有 `--diagnostics-config` 时，命令直接接受 Claude/Cursor/Cline 等客户端的标准 MCP JSON-RPC，不要求额外 grant，不摄取日志、不启动监听端口；stdin/stdout 仅用于诊断协议响应，运行错误写入 stderr。数据库没有 device-sync identity 时会使用本机专用的 `local-mcp` store 标识，仍只暴露固定诊断工具。
@@ -209,8 +209,8 @@ tokenme --db ~/.local/share/tokenme/index.db diagnostics-stdio
 Panel 导出的诊断 grant 可以作为真正的远端 bridge 配置传入：
 
 ```bash
-tokenme --db ~/.local/share/tokenme/index.db \
-  --diagnostics-config ~/Downloads/tokenme-diagnostics.json \
+kimo-token --db ~/.local/share/kimo-token/index.db \
+  --diagnostics-config ~/Downloads/kimo-token-diagnostics.json \
   diagnostics-stdio
 ```
 
@@ -221,11 +221,11 @@ tokenme --db ~/.local/share/tokenme/index.db \
 通过严格的 HTTPS/TLS 1.3 通道，把本机事件上传到已批准的主设备。这个命令不会伪造配对、不会自动清理本地数据，也不会改变旧的 `export/import` 文件入口；必须先由主设备签发 `primary_id`、`stream_id` 和 `data_epoch`，并提供证书 PEM 与 64 位 SHA-256 pin：
 
 ```bash
-tokenme sync upload --endpoint https://192.168.1.20:47821 \
-  --server-name tokenme-primary \
-  --trust-cert ~/.config/tokenme/primary-cert.pem \
+kimo-token sync upload --endpoint https://192.168.1.20:47821 \
+  --server-name kimo-token-primary \
+  --trust-cert ~/.config/kimo-token/primary-cert.pem \
   --pin-sha256 <64-hex-cert-sha256> \
-  --identity ~/.config/tokenme/device-identity.json --origin laptop \
+  --identity ~/.config/kimo-token/device-identity.json --origin laptop \
   --primary-id <primary-id> --stream-id <stream-id> \
   --data-epoch 1 --generation 1
 ```
@@ -238,6 +238,6 @@ tokenme sync upload --endpoint https://192.168.1.20:47821 \
 
 | 数据 | macOS | Linux | Windows |
 | :--- | :--- | :--- | :--- |
-| SQLite 索引 | `~/Library/Application Support/tokenme/index.db` | `~/.local/share/tokenme/index.db` | `%LOCALAPPDATA%\tokenme\index.db` |
-| 设置 | `~/Library/Application Support/tokenme/settings.json` | `~/.config/tokenme/settings.json` | `%APPDATA%\tokenme\settings.json` |
-| 配额缓存 | `<config dir>/tokenme/quota/*.json` | 同一模式 | 同一模式 |
+| SQLite 索引 | `~/Library/Application Support/dev.kimo-token.bar/index.db` | `~/.local/share/kimo-token/index.db` | `%LOCALAPPDATA%\kimo-token\index.db` |
+| 设置 | `~/Library/Application Support/dev.kimo-token.bar/settings.json` | `~/.config/kimo-token/settings.json` | `%APPDATA%\kimo-token\settings.json` |
+| 配额缓存 | `<config dir>/kimo-token/quota/*.json` | 同一模式 | 同一模式 |

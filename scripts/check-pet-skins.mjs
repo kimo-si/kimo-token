@@ -4,8 +4,8 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const petsDir = new URL("../apps/tokenme-bar/src/assets/pets/", import.meta.url);
-const i18nFile = new URL("../apps/tokenme-bar/src/lib/i18n.ts", import.meta.url);
+const petsDir = new URL("../apps/kimo-token-bar/src/assets/pets/", import.meta.url);
+const i18nFile = new URL("../apps/kimo-token-bar/src/lib/i18n.ts", import.meta.url);
 const assetRoles = ["atlas", "side", "left", "top"];
 const frameNames = ["open", "half", "closed", "happy"];
 const eyePoses = ["none", "right", "left", "top"];

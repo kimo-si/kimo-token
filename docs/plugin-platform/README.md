@@ -1,4 +1,4 @@
-# TokenMe plugin platform design
+# kimo-token plugin platform design
 
 Design work on branch plug. Production integration is not implemented; the standalone alpha reference supports only offline quota.read and usage.collect.
 

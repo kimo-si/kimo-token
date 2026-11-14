@@ -4,7 +4,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const panel = fileURLToPath(new URL("../apps/tokenme-bar/", import.meta.url));
+const panel = fileURLToPath(new URL("../apps/kimo-token-bar/", import.meta.url));
 const manifest = JSON.parse(readFileSync(join(panel, "src/assets/pets/pet-skins.json"), "utf8"));
 const sourcePngs = readdirSync(join(panel, "src/assets/pets")).filter((file) => /\.(png|webp)$/.test(file));
 const pngs = [...new Set(Object.values(manifest.skins)

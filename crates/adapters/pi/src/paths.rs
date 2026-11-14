@@ -31,7 +31,7 @@ pub(crate) struct Product {
     pub display: &'static str,
     /// Names the sessions directory directly. For Pi this is ccusage's
     /// `PI_AGENT_DIR`; Cola publishes no variable of its own (see [`COLA`]), so
-    /// its entry here is tokenme's, following the same convention.
+    /// its entry here is kimo-token's, following the same convention.
     pub sessions_env: &'static str,
     /// Names the *config* directory, i.e. one level above the sessions dir, for
     /// a product that has such a second override.
@@ -54,7 +54,7 @@ pub(crate) static PI: Product = Product {
 /// Verified on this machine: nothing under `~/.cola` — `settings.json`,
 /// `crons.json`, `state/`, `identity/`, `logs/` — names a sessions directory,
 /// and no `COLA_*` variable appears in any of its config files. Cola therefore
-/// has no sessions-dir override to honour, so `COLA_SESSIONS_DIR` is tokenme's
+/// has no sessions-dir override to honour, so `COLA_SESSIONS_DIR` is kimo-token's
 /// own (mirroring `PI_AGENT_DIR`) and `~/.cola/sessions` stays the default.
 pub(crate) static COLA: Product = Product {
     id: "cola",

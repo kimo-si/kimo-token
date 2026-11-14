@@ -6,7 +6,7 @@
 
 **现有核心设计不支持将某个 Agent 直接代理给其他工具调用。** 已有 http.request 是出站的有界请求，process.invoke 最长 10 秒；它们没有入站监听、流式协议、长任务、调用方身份与会话隔离。新增网关需要宿主首次实现通用运行服务，此后在已实现的传输/能力范围内，通过安装插件增加 Agent 和接口适配，不再逐个修改核心。
 
-默认场景是本机其他工具访问本机 TokenMe。本地网关属于运行平台，不要求新增云端后台。局域网、互联网服务、多用户托管、WebSocket 和双向实时音视频不在本扩展的首个交付范围；需要它们时新增传输 profile 和独立验收，不能把绑定地址改成 0.0.0.0 就视为支持。
+默认场景是本机其他工具访问本机 kimo-token。本地网关属于运行平台，不要求新增云端后台。局域网、互联网服务、多用户托管、WebSocket 和双向实时音视频不在本扩展的首个交付范围；需要它们时新增传输 profile 和独立验收，不能把绑定地址改成 0.0.0.0 就视为支持。
 
 “代理 Agent”分两种对外合同：
 
@@ -46,7 +46,7 @@ flowchart LR
 
 ## 3. 包注册、协议与项目结构
 
-拟新增扩展 profile tokenme.gateway/0.1，生成独立版本的 manifest/schema/WIT/SDK/TestKit。沿用 Rust→Wasm Component→包的路线；基础包的签名、信任、品牌、语言资源和安装流程复用核心合同。扩展会新增字段/枚举/宿主服务，须声明最低宿主与扩展 profile；旧宿主拒绝必需扩展，不把未知字段当兼容。具体生成合同在 G01 冻结，当前生产 v1 与 alpha 都不接受以下拟议注册区块。
+拟新增扩展 profile kimo-token.gateway/0.1，生成独立版本的 manifest/schema/WIT/SDK/TestKit。沿用 Rust→Wasm Component→包的路线；基础包的签名、信任、品牌、语言资源和安装流程复用核心合同。扩展会新增字段/枚举/宿主服务，须声明最低宿主与扩展 profile；旧宿主拒绝必需扩展，不把未知字段当兼容。具体生成合同在 G01 冻结，当前生产 v1 与 alpha 都不接受以下拟议注册区块。
 
 | 拟议注册块 | 必需内容 |
 | --- | --- |
@@ -93,7 +93,7 @@ model_inference 只允许 start/text_delta/client_tool_call/usage/terminal，结
 
 model_inference 的一次请求可在 client_tool_call 后以 finish_reason=client_tools 结束，后续工具结果作为同一 consumer/session 的新 request 校验；agent_task 若声明客户端工具支持，可以进入 awaiting_client_tool 后继续原任务。G01 必须分别定义其请求/调用关联，不能把两种模式共用一个自动续跑策略。所有 tool_results 校验已登记 call_ref 与单次消费状态，未请求的调用和跨 consumer 回填拒绝。
 
-允许函数调用时，由 Agent 返回结构化 call_ref/name/arguments_json，arguments 最大64KiB，校验声明 schema 后再返回客户端。客户端执行其工具并回传结果；TokenMe 不自动执行这些函数。agent_task 自主执行文件/命令属于独立 agent_execution 授权，见第 8 节。
+允许函数调用时，由 Agent 返回结构化 call_ref/name/arguments_json，arguments 最大64KiB，校验声明 schema 后再返回客户端。客户端执行其工具并回传结果；kimo-token 不自动执行这些函数。agent_task 自主执行文件/命令属于独立 agent_execution 授权，见第 8 节。
 
 ## 5. 长任务和宿主流式服务
 
@@ -183,7 +183,7 @@ endpoint 绑定精确 protocol/provider 包摘要及 generation。升级先停�
 | G04 协议与Provider | A：Anthropic Messages协议＋WorkBuddy model_inference；B：MCP工具协议＋WorkBuddy agent_task | G02/G03；各模式WB-P0步骤1—2/WB-D0 | A执行WB-P0步骤3—5；B按WB-D1—D3，分别冻结/验收，不要求同时可用 |
 | G05 用量与恢复 | usage-index接收、gateway请求/会话/usage表、幂等与核对 | G03/F06/F10 | 请求中断不假零、重复不双计、多模型/累计修正、无ID重叠、dispatch崩溃矩阵有对账证据 |
 | G06 控制面/作者工具 | 网关标准页面、品牌/语言/设置/通知/诊断、模板/build/pack扩展 | G02/G03/F07/F08/F09 | 开关和权限效果可解释，插件声明能动态显示，秘密不导出，包可独立安装/升级/停用 |
-| G07 真实垂直验收 | 指定外部工具→TokenMe→指定Agent→事件/用量/取消 | G04/G05/G06 | 真实安装包、真实客户端和Agent、账号隔离、工具授权、故障/取消/升级、真实用量对账；平台分别留证据 |
+| G07 真实垂直验收 | 指定外部工具→kimo-token→指定Agent→事件/用量/取消 | G04/G05/G06 | 真实安装包、真实客户端和Agent、账号隔离、工具授权、故障/取消/升级、真实用量对账；平台分别留证据 |
 
 对抗场景必须包含：访问者A读写B会话；无key/恶意Origin触发任务；上游不支持工具却被声明兼容；Agent已执行但响应丢失；同key不同正文；取消后上游继续；宿主崩溃在dispatch两侧；慢消费者撑爆内存；会话长占饿死配额任务；重启/升级重放；日志和代理用量双计；原生Agent越过workspace；关闭通知误取消Agent；关闭代理误清空用量。只有实际服务/组件/OS/客户端链路的证据能通过相应验收。
 

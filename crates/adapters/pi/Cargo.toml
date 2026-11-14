@@ -3,7 +3,7 @@ name = "usage-adapter-pi"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "tokenme source adapter: pi"
+description = "kimo-token source adapter: pi"
 
 [dependencies]
 usage-core.workspace = true

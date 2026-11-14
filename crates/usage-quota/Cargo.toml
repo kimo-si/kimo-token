@@ -21,6 +21,10 @@ aes-gcm.workspace = true
 sha2.workspace = true
 md-5.workspace = true
 base64.workspace = true
+tempfile = "3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "native-tls", "system-proxy"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
@@ -30,5 +34,4 @@ webpki-roots = "0.26"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 
 [dev-dependencies]
-tempfile = "3"
 usage-adapter-all.workspace = true

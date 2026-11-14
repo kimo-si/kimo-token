@@ -559,7 +559,7 @@ struct TraeCheckinOutcome {
 }
 
 fn checkin_state_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("tokenme").join("quota").join("trae_cn_checkin.json"))
+    usage_core::paths::config_dir().map(|d| d.join("quota").join("trae_cn_checkin.json"))
 }
 
 fn load_checkin_state(path: &Path) -> TraeCheckinState {

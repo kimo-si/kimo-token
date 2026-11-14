@@ -766,9 +766,9 @@ const TOOL_SPECS: &[ToolSpec] = &[
     ToolSpec { id: ToolId::DiagnosticsRunCheck, name: "diagnostics.run_check", scope: DiagnosticsScope::Read, description: "Run fixed diagnostics checks asynchronously." },
     ToolSpec { id: ToolId::DiagnosticsGetOperation, name: "diagnostics.get_operation", scope: DiagnosticsScope::Read, description: "Read a bounded diagnostics operation result." },
     ToolSpec { id: ToolId::AppGetPanelState, name: "app.get_panel_state", scope: DiagnosticsScope::Read, description: "Return the host panel state." },
-    ToolSpec { id: ToolId::Other, name: "ui.capture_panel", scope: DiagnosticsScope::Read, description: "Capture only the visible TokenMe panel as a bounded image." },
+    ToolSpec { id: ToolId::Other, name: "ui.capture_panel", scope: DiagnosticsScope::Read, description: "Capture only the visible kimo-token panel as a bounded image." },
     ToolSpec { id: ToolId::Other, name: "sync.start_primary", scope: DiagnosticsScope::SyncControl, description: "Start the primary service through the host state machine." },
-    ToolSpec { id: ToolId::Other, name: "sync.pair", scope: DiagnosticsScope::SyncControl, description: "Pair this device from a complete tokenme invite after TLS pin validation." },
+    ToolSpec { id: ToolId::Other, name: "sync.pair", scope: DiagnosticsScope::SyncControl, description: "Pair this device from a complete kimo-token invite after TLS pin validation." },
     ToolSpec { id: ToolId::Other, name: "sync.stop_primary", scope: DiagnosticsScope::SyncControl, description: "Stop the primary service and revoke diagnostics sessions." },
     ToolSpec { id: ToolId::Other, name: "sync.stop_secondary", scope: DiagnosticsScope::SyncControl, description: "Stop the secondary service and disconnect this device." },
     ToolSpec { id: ToolId::Other, name: "sync.discover", scope: DiagnosticsScope::SyncControl, description: "Start one bounded LAN discovery operation." },
@@ -781,7 +781,7 @@ const TOOL_SPECS: &[ToolSpec] = &[
     ToolSpec { id: ToolId::Other, name: "sync.refresh", scope: DiagnosticsScope::SyncControl, description: "Refresh synchronization state through the host handler." },
     ToolSpec { id: ToolId::Other, name: "ui.open_sync_sheet", scope: DiagnosticsScope::SyncControl, description: "Request the semantic sync-sheet UI intent through the host handler." },
     ToolSpec { id: ToolId::Other, name: "ui.focus_device", scope: DiagnosticsScope::SyncControl, description: "Request the semantic device-focus UI intent through the host handler." },
-    ToolSpec { id: ToolId::Other, name: "ui.click_panel", scope: DiagnosticsScope::SyncControl, description: "Click one bounded coordinate inside the TokenMe panel through the host handler." },
+    ToolSpec { id: ToolId::Other, name: "ui.click_panel", scope: DiagnosticsScope::SyncControl, description: "Click one bounded coordinate inside the kimo-token panel through the host handler." },
 ];
 
 pub fn diagnostics_tool_registry() -> Vec<DiagnosticsToolDefinition> {
@@ -1069,7 +1069,7 @@ impl DiagnosticsService {
                 Ok(Some(success_response(id, serde_json::json!({
                     "protocolVersion": DIAGNOSTICS_PROTOCOL_VERSION,
                     "capabilities": { "tools": { "listChanged": false } },
-                    "serverInfo": { "name": "tokenme-diagnostics", "version": env!("CARGO_PKG_VERSION") },
+                    "serverInfo": { "name": "kimo-token-diagnostics", "version": env!("CARGO_PKG_VERSION") },
                     "sessionId": next,
                 }))))
             }
@@ -1147,7 +1147,7 @@ impl DiagnosticsService {
                 let result = serde_json::json!({
                     "protocolVersion": DIAGNOSTICS_PROTOCOL_VERSION,
                     "capabilities": { "tools": { "listChanged": false } },
-                    "serverInfo": { "name": "tokenme-diagnostics", "version": env!("CARGO_PKG_VERSION") },
+                    "serverInfo": { "name": "kimo-token-diagnostics", "version": env!("CARGO_PKG_VERSION") },
                     "sessionId": session_id,
                 });
                 Ok(Some(success_response(id, result)))
@@ -1840,7 +1840,7 @@ fn tool_schema(name: &str) -> Value {
     }
     if name == "sync.pair" {
         schema["properties"] = serde_json::json!({
-            "invite": { "type": "string", "pattern": "^tokenme://device-pair\\?", "maxLength": MAX_DIAGNOSTICS_STRING_BYTES },
+            "invite": { "type": "string", "pattern": "^(kimo-token|tokenme)://device-pair\\?", "maxLength": MAX_DIAGNOSTICS_STRING_BYTES },
             "origin": { "type": "string", "maxLength": MAX_DIAGNOSTICS_STRING_BYTES },
             "display_name": { "type": "string", "maxLength": MAX_DIAGNOSTICS_STRING_BYTES },
             "os": { "type": "string", "maxLength": MAX_DIAGNOSTICS_STRING_BYTES },
@@ -2110,7 +2110,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(responses.len(), 2);
         assert!(responses[0].get("error").is_some());
-        assert_eq!(responses[1]["result"]["serverInfo"]["name"], "tokenme-diagnostics");
+        assert_eq!(responses[1]["result"]["serverInfo"]["name"], "kimo-token-diagnostics");
     }
 
     #[test]
@@ -2130,7 +2130,7 @@ mod tests {
             .map(|line| serde_json::from_slice::<Value>(line).unwrap())
             .collect::<Vec<_>>();
         assert_eq!(responses.len(), 3);
-        assert_eq!(responses[0]["result"]["serverInfo"]["name"], "tokenme-diagnostics");
+        assert_eq!(responses[0]["result"]["serverInfo"]["name"], "kimo-token-diagnostics");
         assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), TOOL_SPECS.len());
         assert_eq!(responses[2]["result"]["structuredContent"]["available"], true);
     }
@@ -2232,11 +2232,11 @@ mod tests {
             "_mcp_image": { "mime_type": "image/png", "data_base64": payload.clone() },
             "width": 2,
             "height": 1,
-            "scope": "tokenme-panel",
+            "scope": "kimo-token-panel",
         })).unwrap();
         assert_eq!(result["content"][0]["type"], "image");
         assert_eq!(result["content"][0]["mimeType"], "image/png");
-        assert_eq!(result["structuredContent"]["scope"], "tokenme-panel");
+        assert_eq!(result["structuredContent"]["scope"], "kimo-token-panel");
         assert!(result["structuredContent"].get("_mcp_image").is_none());
         assert!(mcp_tool_result(json!({
             "_mcp_image": { "mime_type": "text/plain", "data_base64": payload },

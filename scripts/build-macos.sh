@@ -10,7 +10,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-APP="apps/tokenme-bar"
+APP="apps/kimo-token-bar"
 BUNDLE="$APP/src-tauri/target/release/bundle"
 APP_DIR="$BUNDLE/macos"
 DMG_DIR="$BUNDLE/dmg"
@@ -43,7 +43,7 @@ if [[ "$RECORDED_VERSION" != "$VERSION" ]]; then
 fi
 BUILD=$(( $(cat "$BUILD_ID_FILE" 2>/dev/null || echo 0) + 1 ))
 echo "$BUILD" > "$BUILD_ID_FILE"
-echo "==> tokenme build id: $BUILD (v$VERSION)"
+echo "==> kimo-token build id: $BUILD (v$VERSION)"
 T0=$SECONDS
 
 # A stale dist/ would be bundled silently, so build it here rather than trusting it.
@@ -98,7 +98,7 @@ elif [[ -f "$TEST_STAMP" && "$(cat "$TEST_STAMP")" == "$(rust_hash)" ]]; then
 else
   cargo test --workspace --all-targets
   # The panel's Rust lives in its own workspace (root Cargo.toml excludes
-  # apps/tokenme-bar), so the run above never compiles it — and the shipped
+  # apps/kimo-token-bar), so the run above never compiles it — and the shipped
   # binary is the one it produces. The anchor and engine-loop tests caught real
   # bugs and are invisible to the gate unless asked for directly.
   (cd "$APP/src-tauri" && cargo test)
@@ -109,8 +109,8 @@ fi
 t=$SECONDS
 # The panel bundles the two static linux collectors it uploads to servers;
 # stage them when missing so a fresh checkout builds a working app unassisted.
-if [[ ! -x "$APP/src-tauri/resources/collector/tokenme-x86_64" \
-   || ! -x "$APP/src-tauri/resources/collector/tokenme-aarch64" ]]; then
+if [[ ! -x "$APP/src-tauri/resources/collector/kimo-token-x86_64" \
+   || ! -x "$APP/src-tauri/resources/collector/kimo-token-aarch64" ]]; then
   echo "==> collector resources missing; staging them"
   ./scripts/bundle-collector.sh
 fi
@@ -120,30 +120,30 @@ echo "==> tauri build: $((SECONDS - t))s"
 # Tauri leaves the bundle carrying only the linker's ad-hoc signature, and
 # `codesign -v` rejects that ("code has no resources but signature indicates they
 # must be present", because Info.plist is not bound) while the bundle id reads
-# `tokenme-<hash>` instead of `dev.tokenme.bar`. Re-signing ad-hoc binds the
+# `kimo-token-<hash>` instead of `dev.kimo-token.bar`. Re-signing ad-hoc binds the
 # plist and gives the app a stable identity — which is also what a keychain ACL
 # (e.g. Qoder's `Safe Storage` item) is matched against.
 # Keep the CodeDirectory identifier aligned with CFBundleIdentifier. Ad-hoc
 # signing still changes the cdhash per build, but a stable identifier prevents
 # LaunchServices/UserNotifications from treating the code-signing name as a
 # second app identity.
-codesign --force --sign - --identifier dev.tokenme.bar "$APP_DIR/TokenMe.app"
-codesign -v "$APP_DIR/TokenMe.app"
+codesign --force --sign - --identifier dev.kimo-token.bar "$APP_DIR/kimo-token.app"
+codesign -v "$APP_DIR/kimo-token.app"
 
 if (( ! FAST )); then
   # The drag-install image, built with hdiutil rather than Tauri's bundle_dmg.sh:
   # that script drives Finder through AppleScript to arrange icons, so it fails
   # anywhere without Accessibility permission and leaves a half-written rw-*.dmg.
-  hdiutil detach /Volumes/tokenme -quiet 2>/dev/null || true
+  hdiutil detach /Volumes/kimo-token -quiet 2>/dev/null || true
   VERSION=$(grep -m1 '^version = ' "$APP/src-tauri/Cargo.toml" | cut -d'"' -f2)
   STAGE=$(mktemp -d)
   trap 'rm -rf "$STAGE"' EXIT
-  cp -R "$APP_DIR/TokenMe.app" "$STAGE/"
+  cp -R "$APP_DIR/kimo-token.app" "$STAGE/"
   ln -s /Applications "$STAGE/Applications"
   mkdir -p "$DMG_DIR"
   rm -f "$DMG_DIR"/*.dmg "$APP_DIR"/rw.*.dmg
-  hdiutil create -quiet -volname tokenme -srcfolder "$STAGE" -ov -format UDZO \
-    "$DMG_DIR/tokenme_${VERSION}_$(uname -m).dmg"
+  hdiutil create -quiet -volname kimo-token -srcfolder "$STAGE" -ov -format UDZO \
+    "$DMG_DIR/kimo-token_${VERSION}_$(uname -m).dmg"
 fi
 
 echo

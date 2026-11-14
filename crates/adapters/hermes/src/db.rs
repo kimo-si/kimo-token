@@ -187,7 +187,7 @@ fn key_segment(value: &str) -> String {
     out
 }
 
-/// `C:\Users\me\workspace\tokenme` → `tokenme`; the panel shows basenames, and
+/// `C:\Users\me\workspace\kimo-token` → `kimo-token`; the panel shows basenames, and
 /// Hermes runs on both separators.
 fn project_name(cwd: &str) -> String {
     cwd.rsplit(['/', '\\'])

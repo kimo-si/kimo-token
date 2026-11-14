@@ -23,7 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
-SVGS = [ASSETS / "tokenme-hero-dark.svg", ASSETS / "tokenme-hero-light.svg"]
+SVGS = [ASSETS / "kimo-token-hero-dark.svg", ASSETS / "kimo-token-hero-light.svg"]
 
 # Edge headless is the one renderer guaranteed on every Windows dev box here;
 # the install roots arrive via the environment, never spelled as drive paths.

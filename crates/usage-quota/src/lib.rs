@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 use usage_core::{QuotaSample, QuotaView};
 
 pub use providers::ClaudeQuota;
+pub use providers::{cached_codex_reset_credits, codex_reset_credits, CodexResetCredit, CodexResetCredits};
 pub use providers::workbuddy_login;
 
 /// Why this pass's probes came back empty, one line per tool — the registry the
@@ -211,17 +212,6 @@ pub trait QuotaProbe: Send + Sync {
     /// signed in, or the endpoint is down — the caller keeps the last answer.
     fn fetch(&self) -> Vec<QuotaSample>;
 
-    /// Whether this probe also carries a once-a-day task (Qoder's check-in)
-    /// that must run even while the host gate pauses the live read. A paused
-    /// read is silent because the number cannot change while the app is
-    /// closed; a daily claim is a state change on the vendor side that only
-    /// this process can make, and skipping it for a closed window loses the
-    /// day (measured 2026-10-11: the check-in never ran because Qoder was
-    /// closed all morning).
-    fn daily_task(&self) -> bool {
-        false
-    }
-
     /// Probes shell out and hit the network; neither may take the menu-bar
     /// process down with them.
     fn guarded_fetch(&self) -> Vec<QuotaSample> {
@@ -267,9 +257,20 @@ pub struct ProbeInfo {
 /// here on purpose: the report already ships `sources[].display`, and the two
 /// probes with no adapter are the frontend's to name.
 pub fn inventory() -> Vec<ProbeInfo> {
-    let cache = cache::Cache::open("tokenme/quota", TTL);
+    probe_inventory(None)
+}
+
+// 只为桌面版启用的厂商读取配额入口和缓存状态。
+pub fn inventory_for_tool(tool: &str) -> Vec<ProbeInfo> {
+    probe_inventory(Some(tool))
+}
+
+// 共用探测清单的组装逻辑。
+fn probe_inventory(tool: Option<&str>) -> Vec<ProbeInfo> {
+    let cache = cache::Cache::open("quota", TTL);
     built_in()
         .iter()
+        .filter(|probe| tool.is_none_or(|id| probe.tool() == id))
         .map(|probe| {
             let tool = probe.tool();
             ProbeInfo {
@@ -295,14 +296,11 @@ pub fn collect() -> Vec<QuotaView> {
 /// responsive and can afford to wait out a slow probe (the Antigravity CLI takes
 /// ~10 s), while the menu-bar app must not block its refresh on one.
 pub fn collect_within(budget: Duration) -> Vec<QuotaView> {
-    collect_probes_within(budget, built_in(), cache::Cache::open("tokenme/quota", TTL))
+    collect_probes_within(budget, built_in(), cache::Cache::open("quota", TTL))
 }
 
-/// The panel's gated variant: a probe whose `gate` answers `false` (its host
-/// application has exited) is not asked — the vendor call would be for a
-/// number that cannot change — but its LAST KNOWN answer stays on screen, read
-/// from the cache however old it is. The gate is consulted once per pass, so
-/// a host that starts again resumes probing within one TTL.
+/// Applies the panel's polling policy. When the gate refuses a probe, only
+/// its last cached answer is available to the caller.
 pub fn collect_gated(
     budget: Duration,
     gate: impl Fn(&str) -> bool + Send + Sync + 'static,
@@ -310,16 +308,29 @@ pub fn collect_gated(
     collect_probes_gated(
         budget,
         built_in(),
-        cache::Cache::open("tokenme/quota", TTL),
+        cache::Cache::open("quota", TTL),
         &gate,
     )
 }
 
+// 由调用方决定查询间隔；查询指定厂商时跳过内部有效期，但保留旧缓存。
+pub fn refresh_for_tool(tool: &str) -> Vec<QuotaView> {
+    let Some(probe) = built_in().into_iter().find(|probe| probe.tool() == tool) else {
+        return Vec::new();
+    };
+    let cache = cache::Cache::open("quota", TTL);
+    cache::probe_with_mode(cache.as_ref(), probe.as_ref(), cache::ProbeMode::Force)
+}
+
+// 读取指定厂商上次成功保存的配额，不启动任何探测线程。
+pub fn cached_for_tool(tool: &str) -> Vec<QuotaView> {
+    cache::Cache::open("quota", TTL).and_then(|cache| cache.stale(tool)).unwrap_or_default()
+}
+
 /// Invalidate every cached quota answer, so the next [`collect`] re-probes
-/// the vendors for real. The panel's manual full refresh calls this; the idle
-/// cadence never does — a 5-minute-old answer is still worth showing there.
+/// the vendors for real.
 pub fn clear_cache() {
-    if let Some(cache) = cache::Cache::open("tokenme/quota", TTL) {
+    if let Some(cache) = cache::Cache::open("quota", TTL) {
         cache.clear();
     }
 }
@@ -358,12 +369,8 @@ fn collect_probes_gated(
         let cache = Arc::clone(&cache);
         let shared = Arc::clone(&shared);
         let done_count = Arc::clone(&done);
-        // A once-a-day task riding a probe (Qoder's check-in) outranks the
-        // host gate: the gate pauses a *read* whose number cannot change while
-        // the app is closed, but the daily claim is a vendor-side state change
-        // this process alone can make. `cache::probe`'s own TTL still bounds
-        // it — the task runs at the first pass past its window, not per poll.
-        let gated_off = !gate(probe.tool()) && !probe.daily_task();
+        // 由调用方统一决定自动签到例外和用户设置，拒绝时只读缓存。
+        let gated_off = !gate(probe.tool());
         let spawned = std::thread::Builder::new()
             .stack_size(256 * 1024)
             .spawn(move || {

@@ -124,7 +124,7 @@ pub fn bundle_dirs() -> Vec<PathBuf> {
         }
         out.push(PathBuf::from("/Applications"));
     }
-    if let Some(s) = std::env::var_os("TOKENME_APP_DIRS") {
+    if let Some(s) = std::env::var_os("KIMO_TOKEN_APP_DIRS") {
         // A test or a review run can point the lookup at a fixture tree instead.
         out.extend(std::env::split_paths(&s));
     }
@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn a_tool_only_resolves_to_the_bundle_named_for_it() {
-        let dir = std::env::temp_dir().join(format!("tokenme-icons-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kimo-token-icons-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         fixture_bundle(&dir, "Qoder", "icon.icns");
         fixture_bundle(&dir, "NotOurTool", "AppIcon.icns");

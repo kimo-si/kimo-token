@@ -18,14 +18,236 @@
 //! Nothing here logs in or refreshes the token: an expired `access_token` answers
 //! 401 and yields no row.
 
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use usage_core::QuotaSample;
 
 use crate::http::get_json;
 use crate::QuotaProbe;
 
 const ENDPOINT: &str = "https://chatgpt.com/backend-api/wham/usage";
-const USER_AGENT: &str = concat!("tokenme/", env!("CARGO_PKG_VERSION"));
+const RESET_CREDITS_ENDPOINT: &str = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
+const USER_AGENT: &str = concat!("kimo-token/", env!("CARGO_PKG_VERSION"));
+const RESET_CREDITS_TIMEOUT: Duration = Duration::from_secs(4);
+const RESET_CREDITS_DIR: &str = "codex-reset-credits";
+const RESET_CREDITS_HEADERS: [(&str, &str); 4] = [
+    ("Accept", "application/json"),
+    ("User-Agent", USER_AGENT),
+    ("OpenAI-Beta", "codex-1"),
+    ("originator", "Codex Desktop"),
+];
+
+#[derive(Deserialize, Serialize)]
+pub struct CodexResetCredit {
+    pub granted_at_ms: i64,
+    pub expires_at_ms: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum CodexResetCredits {
+    SignInRequired { cards: Option<Vec<CodexResetCredit>> },
+    Unavailable { cards: Option<Vec<CodexResetCredit>> },
+    Ready { cards: Vec<CodexResetCredit> },
+}
+
+enum ResetCreditsError {
+    SignInRequired,
+    Unavailable,
+}
+
+#[derive(Deserialize)]
+struct ResetCreditIdentity {
+    sub: String,
+}
+
+#[derive(Deserialize)]
+struct ResetCreditsResponse {
+    credits: Vec<ResetCreditResponse>,
+    #[serde(rename = "available_count")]
+    _available_count: u64,
+}
+
+#[derive(Deserialize)]
+struct ResetCreditResponse {
+    id: String,
+    status: String,
+    granted_at: String,
+    expires_at: Option<String>,
+}
+
+// 手动刷新时重新读取当前登录账号并查询最新卡片。
+pub fn codex_reset_credits() -> CodexResetCredits {
+    let Some((token, account)) = credential() else {
+        return CodexResetCredits::SignInRequired { cards: None };
+    };
+    let path = reset_credits_cache_path(&token, account.as_deref());
+    // 仅成功响应替换磁盘快照，成功返回零张也算一次更新。
+    match request_reset_credits(&token, account.as_deref()) {
+        Ok(cards) => {
+            if let Some(path) = path.as_deref() {
+                let _ = save_reset_credits(path, &cards);
+            }
+            CodexResetCredits::Ready { cards }
+        }
+        Err(error) => {
+            let cards = path.as_deref().and_then(read_reset_credits);
+            match error {
+                ResetCreditsError::SignInRequired => CodexResetCredits::SignInRequired { cards },
+                ResetCreditsError::Unavailable => CodexResetCredits::Unavailable { cards },
+            }
+        }
+    }
+}
+
+// 仅从磁盘恢复当前账号的快照，启动应用时无需联网。
+pub fn cached_codex_reset_credits() -> Option<Vec<CodexResetCredit>> {
+    let (token, account) = credential()?;
+    let path = reset_credits_cache_path(&token, account.as_deref())?;
+    read_reset_credits(&path)
+}
+
+// 用 OAuth 主体和账号区分快照，令牌轮换时仍能恢复同一账号的数据。
+fn reset_credits_cache_key(token: &str, account: Option<&str>) -> String {
+    let subject = token.split('.').nth(1)
+        .and_then(|segment| URL_SAFE_NO_PAD.decode(segment).ok())
+        .and_then(|claims| serde_json::from_slice::<ResetCreditIdentity>(&claims).ok())
+        .filter(|claims| !claims.sub.is_empty());
+    let mut hash = Sha256::new();
+    let identity = match subject.as_ref() {
+        Some(claims) => {
+            hash.update(b"subject");
+            claims.sub.as_str()
+        }
+        None => {
+            hash.update(b"token");
+            token
+        }
+    };
+    hash.update(identity.len().to_le_bytes());
+    hash.update(identity);
+    hash.update(account.unwrap_or_default());
+    format!("{:x}", hash.finalize())
+}
+
+// 文件名仅包含账号指纹，快照仅包含卡片显示所需的日期。
+fn reset_credits_cache_path(token: &str, account: Option<&str>) -> Option<PathBuf> {
+    let key = reset_credits_cache_key(token, account);
+    Some(usage_core::paths::data_dir()?.join(RESET_CREDITS_DIR).join(format!("{key}.json")))
+}
+
+// 读取完整快照，忽略缺失或损坏的缓存。
+fn read_reset_credits(path: &Path) -> Option<Vec<CodexResetCredit>> {
+    serde_json::from_reader(fs::File::open(path).ok()?).ok()
+}
+
+// 在同一目录写入临时文件并原子替换，避免部分写入损坏旧快照。
+fn save_reset_credits(path: &Path, cards: &[CodexResetCredit]) -> std::io::Result<()> {
+    let dir = path.parent().ok_or(std::io::ErrorKind::InvalidInput)?;
+    fs::create_dir_all(dir)?;
+    let mut file = tempfile::NamedTempFile::new_in(dir)?;
+    serde_json::to_writer(file.as_file_mut(), cards)?;
+    file.persist(path)?;
+    Ok(())
+}
+
+// 将读取结果统一转成面板状态，避免向前端传输账户信息和响应原文。
+fn request_reset_credits(token: &str, account: Option<&str>) -> Result<Vec<CodexResetCredit>, ResetCreditsError> {
+    let payload = fetch_reset_credit_payload(token, account)?;
+    available_reset_credits(payload, usage_core::report::now_ms()).ok_or(ResetCreditsError::Unavailable)
+}
+
+// macOS 菜单栏进程读取系统代理和证书信任设置，禁止重定向携带凭据。
+#[cfg(target_os = "macos")]
+fn fetch_reset_credit_payload(
+    token: &str,
+    account: Option<&str>,
+) -> Result<ResetCreditsResponse, ResetCreditsError> {
+    use ResetCreditsError::{SignInRequired, Unavailable};
+    let client = reqwest::blocking::Client::builder()
+        .https_only(true)
+        .timeout(RESET_CREDITS_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| Unavailable)?;
+    let mut request = client.get(RESET_CREDITS_ENDPOINT).bearer_auth(token);
+    for (name, value) in RESET_CREDITS_HEADERS {
+        request = request.header(name, value);
+    }
+    if let Some(id) = account {
+        request = request.header("ChatGPT-Account-ID", id);
+    }
+    let response = request.send().map_err(|_| Unavailable)?;
+    match response.status().as_u16() {
+        200 => response.json().map_err(|_| Unavailable),
+        401 => Err(SignInRequired),
+        _ => Err(Unavailable),
+    }
+}
+
+// 其他平台沿用现有配额客户端的 TLS 设置，仅允许固定的 HTTPS 请求。
+#[cfg(not(target_os = "macos"))]
+fn fetch_reset_credit_payload(
+    token: &str,
+    account: Option<&str>,
+) -> Result<ResetCreditsResponse, ResetCreditsError> {
+    use ResetCreditsError::{SignInRequired, Unavailable};
+    let agent = crate::http::agent_builder()
+        .https_only(true)
+        .redirects(0)
+        .timeout(RESET_CREDITS_TIMEOUT)
+        .timeout_connect(RESET_CREDITS_TIMEOUT)
+        .build();
+    let mut request = agent
+        .get(RESET_CREDITS_ENDPOINT)
+        .set("Authorization", &format!("Bearer {token}"));
+    for (name, value) in RESET_CREDITS_HEADERS {
+        request = request.set(name, value);
+    }
+    if let Some(id) = account {
+        request = request.set("ChatGPT-Account-ID", id);
+    }
+    match request.call() {
+        Ok(response) if response.status() == 200 => response.into_json().map_err(|_| Unavailable),
+        Err(ureq::Error::Status(401, _)) => Err(SignInRequired),
+        _ => Err(Unavailable),
+    }
+}
+
+// 保留可用且未过期的卡，已知到期时间最早的排在前面。
+fn available_reset_credits(payload: ResetCreditsResponse, now_ms: i64) -> Option<Vec<CodexResetCredit>> {
+    let mut ids = HashSet::new();
+    let mut cards = Vec::new();
+    for row in payload.credits.into_iter().filter(|row| row.status == "available") {
+        let expires_at_ms = match row.expires_at.as_deref() {
+            Some(value) => Some(reset_credit_date(value)?),
+            None => None,
+        };
+        if expires_at_ms.is_some_and(|expires| expires <= now_ms) || !ids.insert(row.id) {
+            continue;
+        }
+        cards.push(CodexResetCredit {
+            granted_at_ms: reset_credit_date(&row.granted_at)?,
+            expires_at_ms,
+        });
+    }
+    cards.sort_by_key(|card| (card.expires_at_ms.unwrap_or(i64::MAX), card.granted_at_ms));
+    Some(cards)
+}
+
+// API 返回带时区的 ISO 8601 字符串，统一转换为毫秒时间戳。
+fn reset_credit_date(raw: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|date| date.timestamp_millis())
+}
 
 pub struct CodexQuota;
 
@@ -149,6 +371,58 @@ pub(crate) fn token_in(text: &str) -> Option<(String, Option<String>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 同一账号换令牌后可恢复，切换用户或工作区会读取另一份快照。
+    #[test]
+    fn reset_credit_cache_keys_are_stable_and_account_scoped() {
+        let subject_a = URL_SAFE_NO_PAD.encode(br#"{"sub":"user-a"}"#);
+        let subject_b = URL_SAFE_NO_PAD.encode(br#"{"sub":"user-b"}"#);
+        let old = format!("header.{subject_a}.old");
+        let rotated = format!("header.{subject_a}.new");
+        let other = format!("header.{subject_b}.new");
+        let key = reset_credits_cache_key(&old, Some("workspace"));
+        assert_eq!(key, reset_credits_cache_key(&rotated, Some("workspace")));
+        assert_ne!(key, reset_credits_cache_key(&other, Some("workspace")));
+        assert_ne!(key, reset_credits_cache_key(&old, Some("other-workspace")));
+        assert_ne!(reset_credits_cache_key("opaque-a", None), reset_credits_cache_key("opaque-b", None));
+    }
+
+    // 快照能跨读取保留，零张卡的成功结果可替换旧列表。
+    #[test]
+    fn reset_credit_snapshot_round_trips_and_accepts_empty_results() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("snapshot").join("credits.json");
+        assert!(read_reset_credits(&path).is_none());
+        let card = CodexResetCredit { granted_at_ms: 1000, expires_at_ms: Some(2000) };
+        save_reset_credits(&path, &[card]).unwrap();
+        let restored = read_reset_credits(&path).unwrap();
+        assert_eq!(restored[0].expires_at_ms, Some(2000));
+        save_reset_credits(&path, &[]).unwrap();
+        assert!(read_reset_credits(&path).unwrap().is_empty());
+    }
+
+    // 覆盖到期边界、重复记录、无到期时间及两种时间格式。
+    #[test]
+    fn reset_credits_show_only_available_cards_in_expiry_order() {
+        let payload = serde_json::from_str(r#"{
+            "available_count": 5,
+            "credits": [
+                {"id":"later","status":"available","granted_at":"2026-11-01T01:30:00Z","expires_at":"2026-11-18T13:30:00Z"},
+                {"id":"open","status":"available","granted_at":"2026-11-02T01:30:00Z","expires_at":null},
+                {"id":"used","status":"redeemed","granted_at":"2026-11-01T01:30:00Z","expires_at":"2026-11-12T13:30:00Z"},
+                {"id":"expired","status":"available","granted_at":"2026-11-01T01:30:00Z","expires_at":"2026-11-11T12:00:00Z"},
+                {"id":"soon","status":"available","granted_at":"2026-11-03T01:30:00Z","expires_at":"2026-11-11T21:30:00.125+08:00"},
+                {"id":"soon","status":"available","granted_at":"2026-11-03T01:30:00Z","expires_at":"2026-11-11T21:30:00.125+08:00"}
+            ]
+        }"#).unwrap();
+        let now = reset_credit_date("2026-11-11T12:00:00Z").unwrap();
+        let cards = available_reset_credits(payload, now).unwrap();
+        assert_eq!(cards.len(), 3);
+        assert_eq!(cards[0].expires_at_ms, reset_credit_date("2026-11-11T13:30:00.125Z"));
+        assert_eq!(cards[1].expires_at_ms, reset_credit_date("2026-11-18T13:30:00Z"));
+        assert_eq!(cards[2].expires_at_ms, None);
+        assert_eq!(cards[2].granted_at_ms, reset_credit_date("2026-11-02T01:30:00Z").unwrap());
+    }
 
     /// Captured 200 body from `GET /backend-api/wham/usage` (account identifiers
     /// faked, every field name and unit is the real thing).

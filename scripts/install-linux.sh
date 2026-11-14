@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Install the tokenme CLI on a Linux collector (or any Linux machine you want
+# Install the kimo-token CLI on a Linux collector (or any Linux machine you want
 # to read usage from). One command, no Rust, no Python, no daemon to babysit:
 #
 #   ./install-linux.sh
-#       binary → ~/.local/bin/tokenme (+ a PATH line in ~/.profile if needed)
+#       binary → ~/.local/bin/kimo-token (+ a PATH line in ~/.profile if needed)
 #
 #   ./install-linux.sh --every 15 --push user@display-host
-#       also installs a systemd --user timer that runs `tokenme export` every
-#       15 minutes into ~/tokenme-sync, and scp's each fresh bundle to the
-#       display machine's ~/tokenme-sync (where the menu-bar engine merges it
+#       also installs a systemd --user timer that runs `kimo-token export` every
+#       15 minutes into ~/kimo-token-sync, and scp's each fresh bundle to the
+#       display machine's ~/kimo-token-sync (where the menu-bar engine merges it
 #       automatically on its next pass).
 #
 #   ./install-linux.sh --uninstall
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 PREFIX="${HOME}/.local/bin"
-SYNC_DIR="${HOME}/tokenme-sync"
+SYNC_DIR="${HOME}/kimo-token-sync"
 UNITS="${HOME}/.config/systemd/user"
 EVERY=""
 PUSH=""
@@ -31,7 +31,7 @@ usage: install-linux.sh [options]
   --every <minutes>   install/replace a timer that exports every N minutes
                       (systemd --user when reachable, else a cron job)
   --push <user@host>  with --every: scp each fresh bundle to that machine's
-                      ~/tokenme-sync (where TokenMe's panel picks it up)
+                      ~/kimo-token-sync (where kimo-token's panel picks it up)
   --origin <name>     origin name for exported bundles (default: hostname;
                       generic cloud hostnames append a short machine-id)
   --days <n>          export window in days (default 30; use 400 once for a
@@ -56,28 +56,28 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ $UNINSTALL == 1 ]]; then
-  systemctl --user disable --now tokenme-export.timer 2>/dev/null || true
-  rm -f "$UNITS/tokenme-export.timer" "$UNITS/tokenme-export.service"
+  systemctl --user disable --now kimo-token-export.timer 2>/dev/null || true
+  rm -f "$UNITS/kimo-token-export.timer" "$UNITS/kimo-token-export.service"
   systemctl --user daemon-reload 2>/dev/null || true
-  if command -v crontab >/dev/null && crontab -l 2>/dev/null | grep -q 'tokenme-export-run.sh'; then
+  if command -v crontab >/dev/null && crontab -l 2>/dev/null | grep -q 'kimo-token-export-run.sh'; then
     TMP_CRON="$(mktemp)"
-    crontab -l 2>/dev/null | grep -v '# tokenme-sync-export' \
-      | grep -v 'tokenme-export-run.sh' > "$TMP_CRON" || true
+    crontab -l 2>/dev/null | grep -v '# kimo-token-sync-export' \
+      | grep -v 'kimo-token-export-run.sh' > "$TMP_CRON" || true
     crontab "$TMP_CRON" && echo "cron job removed"
     rm -f "$TMP_CRON"
   fi
-  rm -f "$PREFIX/tokenme" "$PREFIX/tokenme-sync-push.sh" "$PREFIX/tokenme-export-run.sh"
-  echo "tokenme removed. Your data is untouched:"
-  echo "  index:   ~/.local/share/tokenme/index.db (or the CLI's --db path)"
+  rm -f "$PREFIX/kimo-token" "$PREFIX/kimo-token-sync-push.sh" "$PREFIX/kimo-token-export-run.sh"
+  echo "kimo-token removed. Your data is untouched:"
+  echo "  index:   ~/.local/share/kimo-token/index.db (or the CLI's --db path)"
   echo "  bundles: $SYNC_DIR"
   exit 0
 fi
 
-SRC="$(cd "$(dirname "$0")" && pwd)/tokenme"
-[[ -f "$SRC" ]] || { echo "tokenme binary not found next to this script ($SRC)" >&2; exit 1; }
+SRC="$(cd "$(dirname "$0")" && pwd)/kimo-token"
+[[ -f "$SRC" ]] || { echo "kimo-token binary not found next to this script ($SRC)" >&2; exit 1; }
 
 mkdir -p "$PREFIX" "$SYNC_DIR"
-install -m 0755 "$SRC" "$PREFIX/tokenme"
+install -m 0755 "$SRC" "$PREFIX/kimo-token"
 
 case ":$PATH:" in
   *":$PREFIX:"*) ;;
@@ -113,64 +113,64 @@ if [[ -z "$ORIGIN" ]]; then
   esac
 fi
 
-echo "installed: $PREFIX/tokenme ($("$PREFIX/tokenme" --version))"
+echo "installed: $PREFIX/kimo-token ($("$PREFIX/kimo-token" --version))"
 echo
 echo "verify with the trio:"
-echo "  tokenme detect     # tools found on this machine"
-echo "  tokenme index      # build/refresh the local index"
-echo "  tokenme export     # write ~/tokenme-sync/tokenme-$ORIGIN.jsonl.gz"
+echo "  kimo-token detect     # tools found on this machine"
+echo "  kimo-token index      # build/refresh the local index"
+echo "  kimo-token export     # write ~/kimo-token-sync/kimo-token-$ORIGIN.jsonl.gz"
 
 if [[ -n "$EVERY" ]]; then
   mkdir -p "$UNITS"
 
   if [[ -n "$PUSH" ]]; then
-    # The display machine's engine watches ~/tokenme-sync; make sure it exists.
+    # The display machine's engine watches ~/kimo-token-sync; make sure it exists.
     # BatchMode: never prompt here — a missing key is reported, not waited on.
-    if ssh -o BatchMode=yes -o ConnectTimeout=5 "$PUSH" "mkdir -p ~/tokenme-sync" 2>/dev/null; then
-      echo "ssh to $PUSH ok (~/tokenme-sync ensured)"
+    if ssh -o BatchMode=yes -o ConnectTimeout=5 "$PUSH" "mkdir -p ~/kimo-token-sync" 2>/dev/null; then
+      echo "ssh to $PUSH ok (~/kimo-token-sync ensured)"
     else
       echo "note: passwordless ssh to $PUSH is not set up yet."
       echo "      run once, then re-run this installer:  ssh-copy-id $PUSH"
     fi
-    cat > "$PREFIX/tokenme-sync-push.sh" <<PUSH_SCRIPT
+    cat > "$PREFIX/kimo-token-sync-push.sh" <<PUSH_SCRIPT
 #!/usr/bin/env bash
 # Generated by install-linux.sh --push: ship the freshest bundle to the
 # display machine after each export. -q keeps the journal quiet on success.
 set -euo pipefail
-scp -q "$SYNC_DIR/tokenme-$ORIGIN.jsonl.gz" "$SYNC_DIR/tokenme-$ORIGIN.manifest.json" "$PUSH:tokenme-sync/"
+scp -q "$SYNC_DIR/kimo-token-$ORIGIN.jsonl.gz" "$SYNC_DIR/kimo-token-$ORIGIN.manifest.json" "$PUSH:kimo-token-sync/"
 PUSH_SCRIPT
-    chmod +x "$PREFIX/tokenme-sync-push.sh"
+    chmod +x "$PREFIX/kimo-token-sync-push.sh"
   fi
 
   # One export pass, shared by the systemd unit and the cron fallback. flock
   # keeps a slow pass from stacking on the next tick; no flock (rare) still
   # exports.
-  cat > "$PREFIX/tokenme-export-run.sh" <<RUNNER
+  cat > "$PREFIX/kimo-token-export-run.sh" <<RUNNER
 #!/usr/bin/env bash
 # Generated by install-linux.sh: export this machine's usage once, then push
 # when --push was used. Called by the systemd timer or the cron job.
 set -euo pipefail
 if command -v flock >/dev/null; then
-  exec 9>/tmp/tokenme-export.lock
+  exec 9>/tmp/kimo-token-export.lock
   flock -n 9 || exit 0
 fi
-"$PREFIX/tokenme" export --days $DAYS --out $SYNC_DIR --origin "$ORIGIN"
-if [[ -x "$PREFIX/tokenme-sync-push.sh" ]]; then "$PREFIX/tokenme-sync-push.sh"; fi
+"$PREFIX/kimo-token" export --days $DAYS --out $SYNC_DIR --origin "$ORIGIN"
+if [[ -x "$PREFIX/kimo-token-sync-push.sh" ]]; then "$PREFIX/kimo-token-sync-push.sh"; fi
 RUNNER
-  chmod +x "$PREFIX/tokenme-export-run.sh"
+  chmod +x "$PREFIX/kimo-token-export-run.sh"
 
-  cat > "$UNITS/tokenme-export.service" <<UNIT
+  cat > "$UNITS/kimo-token-export.service" <<UNIT
 [Unit]
-Description=tokenme — export this machine's usage for sync
+Description=kimo-token — export this machine's usage for sync
 
 [Service]
 Type=oneshot
-ExecStart=$PREFIX/tokenme-export-run.sh
+ExecStart=$PREFIX/kimo-token-export-run.sh
 UNIT
 
-  cat > "$UNITS/tokenme-export.timer" <<UNIT
+  cat > "$UNITS/kimo-token-export.timer" <<UNIT
 [Unit]
-Description=tokenme export every ${EVERY} min
+Description=kimo-token export every ${EVERY} min
 
 [Timer]
 OnBootSec=2min
@@ -182,7 +182,7 @@ WantedBy=timers.target
 UNIT
 
   if command -v systemctl >/dev/null && systemctl --user daemon-reload 2>/dev/null \
-     && systemctl --user enable --now tokenme-export.timer 2>/dev/null; then
+     && systemctl --user enable --now kimo-token-export.timer 2>/dev/null; then
     # A headless box has no login session, so user timers only run with lingering.
     if ! loginctl show-user "$USER" 2>/dev/null | grep -q "Linger=yes"; then
       loginctl enable-linger "$USER" 2>/dev/null \
@@ -190,14 +190,14 @@ UNIT
     fi
     echo
     echo "timer active: every ${EVERY} min → $SYNC_DIR"
-    echo "next run:     systemctl --user list-timers tokenme-export.timer"
+    echo "next run:     systemctl --user list-timers kimo-token-export.timer"
     # One export now, so a failure shows up immediately — but a failed first
     # run must not fail the install; the timer retries and the message says how
     # to look.
-    if systemctl --user start tokenme-export.service 2>/dev/null; then
-      echo "ran once already: systemctl --user status tokenme-export.service"
+    if systemctl --user start kimo-token-export.service 2>/dev/null; then
+      echo "ran once already: systemctl --user status kimo-token-export.service"
     else
-      echo "note: the first export run failed — check it with:  systemctl --user status tokenme-export.service"
+      echo "note: the first export run failed — check it with:  systemctl --user status kimo-token-export.service"
     fi
   else
     # No reachable user manager (container, bare ssh): cron does the same job
@@ -210,24 +210,24 @@ UNIT
     fi
     if [[ -z "$CRON_LINE" ]]; then
       echo "note: the user manager is not reachable and ${EVERY} min has no cron pattern."
-      echo "      with a session available:  systemctl --user enable --now tokenme-export.timer"
+      echo "      with a session available:  systemctl --user enable --now kimo-token-export.timer"
     elif command -v crontab >/dev/null; then
       TMP_CRON="$(mktemp)"
-      { crontab -l 2>/dev/null | grep -v '# tokenme-sync-export' | grep -v 'tokenme-export-run.sh' || true
-        echo "# tokenme-sync-export every ${EVERY} min"
-        echo "$CRON_LINE $PREFIX/tokenme-export-run.sh >/dev/null"
+      { crontab -l 2>/dev/null | grep -v '# kimo-token-sync-export' | grep -v 'kimo-token-export-run.sh' || true
+        echo "# kimo-token-sync-export every ${EVERY} min"
+        echo "$CRON_LINE $PREFIX/kimo-token-export-run.sh >/dev/null"
       } > "$TMP_CRON"
       if crontab "$TMP_CRON" 2>/dev/null; then
         echo "timer: user manager not reachable — installed a cron job instead (every ${EVERY} min)"
       else
-        echo "note: could not install cron; with a session available:  systemctl --user enable --now tokenme-export.timer"
+        echo "note: could not install cron; with a session available:  systemctl --user enable --now kimo-token-export.timer"
       fi
       rm -f "$TMP_CRON"
     else
       echo "note: no reachable user manager and no crontab on this machine."
-      echo "      run once with a session available:  systemctl --user enable --now tokenme-export.timer"
+      echo "      run once with a session available:  systemctl --user enable --now kimo-token-export.timer"
       echo "      or keep a session open:  sudo loginctl enable-linger $USER"
     fi
-    "$PREFIX/tokenme-export-run.sh" || echo "note: the first run failed; check:  $PREFIX/tokenme detect"
+    "$PREFIX/kimo-token-export-run.sh" || echo "note: the first run failed; check:  $PREFIX/kimo-token detect"
   fi
 fi

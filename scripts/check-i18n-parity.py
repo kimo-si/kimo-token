@@ -36,8 +36,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_TS = ROOT / "apps/tokenme-bar/src/lib/i18n.ts"
-SRC = ROOT / "apps/tokenme-bar/src"
+DEFAULT_TS = ROOT / "apps/kimo-token-bar/src/lib/i18n.ts"
+SRC = ROOT / "apps/kimo-token-bar/src"
 
 DICT_START = re.compile(r"^const (zh|en)(?::[^=]+)? = \{$")
 STARTS = re.compile(r'^\s*"((?:[^"\\]|\\.)*)"\s*:\s*(.*)$')

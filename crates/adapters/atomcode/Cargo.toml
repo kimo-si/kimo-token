@@ -3,7 +3,7 @@ name = "usage-adapter-atomcode"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "tokenme source adapter: atomcode"
+description = "kimo-token source adapter: atomcode"
 
 [dependencies]
 usage-core = { path = "../../usage-core" }

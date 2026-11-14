@@ -3,7 +3,7 @@ name = "usage-adapter-opencode"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "tokenme source adapter: opencode"
+description = "kimo-token source adapter: opencode"
 
 [dependencies]
 usage-core.workspace = true

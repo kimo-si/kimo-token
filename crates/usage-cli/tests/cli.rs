@@ -1,4 +1,4 @@
-//! Black-box tests for the `tokenme` binary. They avoid the real adapters: the
+//! Black-box tests for the `kimo-token` binary. They avoid the real adapters: the
 //! cases here either exit before probing or use `--no-ingest`/`--status`, so a
 //! half-finished adapter cannot break the CLI's own contract.
 
@@ -8,8 +8,9 @@ use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use usage_device_sync::SyncStore;
 
-fn tokenme() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_tokenme"))
+// 创建指向当前构建 CLI 的测试命令。
+fn kimo_token() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_kimo-token"))
 }
 
 /// A database of this process's own. Two `cargo test` runs on one fixed path (or a
@@ -19,7 +20,7 @@ fn temp_db(name: &str) -> PathBuf {
     static SEQ: AtomicUsize = AtomicUsize::new(0);
     let mut path = std::env::temp_dir();
     path.push(format!(
-        "tokenme-cli-test-{name}-{}-{}.db",
+        "kimo-token-cli-test-{name}-{}-{}.db",
         std::process::id(),
         SEQ.fetch_add(1, Ordering::Relaxed)
     ));
@@ -62,16 +63,16 @@ fn read_event_count(path: &Path) -> u64 {
 }
 
 fn run(args: &[&str]) -> Output {
-    tokenme()
+    kimo_token()
         .args(args)
         .env("NO_COLOR", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("tokenme builds and runs")
+        .expect("kimo-token builds and runs")
         .wait_with_output()
-        .expect("tokenme exited")
+        .expect("kimo-token exited")
 }
 
 fn stdout(out: &Output) -> String {
@@ -97,14 +98,14 @@ fn help_is_printable() {
 fn diagnostics_stdio_is_a_jsonrpc_only_cli_host() {
     let db = temp_db("diagnostics-stdio");
     SyncStore::open(&db, "primary-cli").expect("initialize sync identity");
-    let mut child = tokenme()
+    let mut child = kimo_token()
         .args(["--db", db.to_str().unwrap(), "diagnostics-stdio"])
         .env("NO_COLOR", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("tokenme diagnostics stdio starts");
+        .expect("kimo-token diagnostics stdio starts");
     child
         .stdin
         .as_mut()
@@ -121,8 +122,8 @@ fn diagnostics_stdio_is_a_jsonrpc_only_cli_host() {
         .collect::<Vec<_>>();
     assert_eq!(responses.len(), 2, "stdout must contain one bounded response per request");
     assert!(responses[0].get("error").is_some(), "malformed requests must fail closed: {responses:?}");
-    assert_eq!(responses[1]["result"]["serverInfo"]["name"], "tokenme-diagnostics", "local MCP initialize must return the fixed registry: {responses:?}");
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("tokenme:"), "CLI diagnostics host must not mix logs into stdout");
+    assert_eq!(responses[1]["result"]["serverInfo"]["name"], "kimo-token-diagnostics", "local MCP initialize must return the fixed registry: {responses:?}");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("kimo-token:"), "CLI diagnostics host must not mix logs into stdout");
     remove_db(&db);
 }
 
@@ -157,7 +158,7 @@ fn an_unopenable_index_is_exit_1() {
     // relative filename and SQLite can create it.  A directory is not a valid
     // SQLite database on either platform and gives the same open failure.
     let blocked = std::env::temp_dir().join(format!(
-        "tokenme-cli-unopenable-{}",
+        "kimo-token-cli-unopenable-{}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir(&blocked);

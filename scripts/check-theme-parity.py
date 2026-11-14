@@ -17,6 +17,7 @@ This parses the three colour blocks (light :root, media, pin) and fails on:
     two blocks indent their multi-line values differently by design),
   - index.html's boot-shell literals not matching --ink-3 / --accent, in
     either appearance, or its two dark shell blocks disagreeing.
+  - an additional skin's boot-shell or native window colours drifting from CSS.
 
 Usage: check-theme-parity.py [path-to-theme.css]
 """
@@ -26,9 +27,10 @@ import sys
 from pathlib import Path
 
 DEFAULT_CSS = (
-    Path(__file__).resolve().parent.parent / "apps/tokenme-bar/src/styles/theme.css"
+    Path(__file__).resolve().parent.parent / "apps/kimo-token-bar/src/styles/theme.css"
 )
-INDEX_HTML = Path(__file__).resolve().parent.parent / "apps/tokenme-bar/index.html"
+INDEX_HTML = Path(__file__).resolve().parent.parent / "apps/kimo-token-bar/index.html"
+PANEL_RS = INDEX_HTML.parent / "src-tauri/src/panel.rs"
 LIGHT = ":root {"
 MEDIA = "@media (prefers-color-scheme: dark)"
 PIN = ':root[data-theme="dark"] {'
@@ -45,6 +47,10 @@ SHELL_MARKS = {
 }
 SHELL_TOKEN = re.compile(r"--boot-([a-z]+)\s*:\s*([^;]+);")
 SHELL_TO_THEME = {"ink": "ink-3", "accent": "accent"}
+SKIN_RULE = re.compile(r':root\[data-panel-skin="([a-z]+)"\] \{')
+NATIVE_PALETTE = re.compile(
+    r"Theme::(\w+)(?: \| Theme::System)? => \(0x([a-f0-9]{6}), 0x([a-f0-9]{6}), 0x([a-f0-9]{6})\)",
+)
 
 
 def die(msg):
@@ -115,6 +121,29 @@ def boot_shell_problems(light_v, pin_v):
     return out
 
 
+# 校验扩展皮肤在启动壳、原生窗口和页面中使用相同的颜色。
+def skin_palette_problems(css, light, dark):
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    native = {name.lower(): tuple("#" + color for color in colors)
+              for name, *colors in NATIVE_PALETTE.findall(PANEL_RS.read_text(encoding="utf-8"))}
+    palettes = {"light": light, "dark": dark}
+    out = []
+    for match in SKIN_RULE.finditer(css):
+        name = match.group(1)
+        _, palette = tokens(rule_body(css, match.group()))
+        palettes[name] = palette
+        shell = dict(SHELL_TOKEN.findall(rule_body(html, f'html[data-panel-skin="{name}"] {{')))
+        expected = {token: palette.get(source) for token, source in SHELL_TO_THEME.items()}
+        if shell != expected:
+            out.append(f"{name} boot shell colors do not match theme.css")
+
+    for name, palette in palettes.items():
+        expected = tuple(palette.get(token, "").lower() for token in ("surface", "ink-3", "accent"))
+        if native.get(name) != expected:
+            out.append(f"{name} native panel colors do not match theme.css")
+    return out
+
+
 def main():
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_CSS
     text = path.read_text(encoding="utf-8")
@@ -148,6 +177,7 @@ def main():
             )
 
     problems.extend(boot_shell_problems(light_v, pin_v))
+    problems.extend(skin_palette_problems(text, light_v, pin_v))
 
     if problems:
         die("the palette has drifted:\n  - " + "\n  - ".join(problems))

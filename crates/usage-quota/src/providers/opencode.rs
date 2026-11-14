@@ -57,7 +57,7 @@ use crate::QuotaProbe;
 
 const ENDPOINT: &str = "https://opencode.ai/zen/go/v1/usage";
 const OFFICIAL_BASE_URL: &str = "https://opencode.ai/zen/go/v1";
-const USER_AGENT: &str = concat!("tokenme/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("kimo-token/", env!("CARGO_PKG_VERSION"));
 
 /// The provider ids OpenCode writes for a Go key (`opencode auth login -p
 /// opencode-go`), in preference order, with `opencode` kept as the legacy alias

@@ -1180,18 +1180,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokenme-plugin-reference-host"
+name = "kimo-token-plugin-reference-host"
 version = "0.1.0"
 dependencies = [
  "serde_json",
  "sha2",
- "tokenme-plugin-sdk-reference",
+ "kimo-token-plugin-sdk-reference",
  "wasmtime",
  "wasmtime-wasi",
 ]
 
 [[package]]
-name = "tokenme-plugin-sdk-reference"
+name = "kimo-token-plugin-sdk-reference"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -1199,12 +1199,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokenme-reference-plugin"
+name = "kimo-token-reference-plugin"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "tokenme-plugin-sdk-reference",
+ "kimo-token-plugin-sdk-reference",
  "wit-bindgen",
 ]
 

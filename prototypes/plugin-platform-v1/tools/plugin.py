@@ -1,4 +1,4 @@
-"""Local, executable alpha SDK workflow. Never installs into the real TokenMe profile."""
+"""Local, executable alpha SDK workflow. Never installs into the real kimo-token profile."""
 from __future__ import annotations
 
 import argparse
@@ -239,7 +239,7 @@ def build():
     versions = environment_check()
     project_files()
     fingerprint = source_fingerprint()
-    process(["cargo", "build", "--locked", "--target-dir", str(ROOT / "target"), "-p", "tokenme-plugin-reference-host"])
+    process(["cargo", "build", "--locked", "--target-dir", str(ROOT / "target"), "-p", "kimo-token-plugin-reference-host"])
     cargo_home = Path(os.environ.get("CARGO_HOME",Path.home()/".cargo")).resolve()
     sysroot_result = process(["rustc","--print","sysroot"],capture=True)
     require(sysroot_result.returncode==0,"TOOLCHAIN.SYSROOT")
@@ -248,24 +248,24 @@ def build():
     for path, replacement in paths:
         for prefix in sorted({str(path),path.as_posix()}):
             flags.append(f"--remap-path-prefix={prefix}={replacement}")
-    process(["cargo", "build", "--locked", "--target-dir", str(ROOT / "target"), "--release", "--target", "wasm32-wasip2", "-p", "tokenme-reference-plugin"],environment={"CARGO_ENCODED_RUSTFLAGS":"\x1f".join(flags)})
+    process(["cargo", "build", "--locked", "--target-dir", str(ROOT / "target"), "--release", "--target", "wasm32-wasip2", "-p", "kimo-token-reference-plugin"],environment={"CARGO_ENCODED_RUSTFLAGS":"\x1f".join(flags)})
     require(fingerprint == source_fingerprint(), "BUILD.SOURCE_CHANGED")
-    atomic_json(ROOT / "target/build-receipt.json", {"schema":"tokenme.build-receipt/0.1", "status":"passed", "sourceTreeSha256":fingerprint, "moduleSha256":hashlib.sha256(module_path().read_bytes()).hexdigest(), "hostSha256":hashlib.sha256(host_path().read_bytes()).hexdigest(), "versions":versions})
+    atomic_json(ROOT / "target/build-receipt.json", {"schema":"kimo-token.build-receipt/0.1", "status":"passed", "sourceTreeSha256":fingerprint, "moduleSha256":hashlib.sha256(module_path().read_bytes()).hexdigest(), "hostSha256":hashlib.sha256(host_path().read_bytes()).hexdigest(), "versions":versions})
 
 
 def module_path():
-    return ROOT / "target/wasm32-wasip2/release/tokenme_reference_plugin.wasm"
+    return ROOT / "target/wasm32-wasip2/release/kimo_token_reference_plugin.wasm"
 
 
 def host_path():
-    return ROOT / "target/debug" / ("tokenme-plugin-reference-host.exe" if os.name == "nt" else "tokenme-plugin-reference-host")
+    return ROOT / "target/debug" / ("kimo-token-plugin-reference-host.exe" if os.name == "nt" else "kimo-token-plugin-reference-host")
 
 
 def build_receipt(*, current_source=False):
     receipt_path = ROOT / "target/build-receipt.json"
     require(receipt_path.is_file(), "BUILD.PROVENANCE_REQUIRED")
     receipt = decoded(receipt_path.read_bytes())
-    require(isinstance(receipt, dict) and receipt.get("schema") == "tokenme.build-receipt/0.1" and receipt.get("status") == "passed", "BUILD.PROVENANCE_REQUIRED")
+    require(isinstance(receipt, dict) and receipt.get("schema") == "kimo-token.build-receipt/0.1" and receipt.get("status") == "passed", "BUILD.PROVENANCE_REQUIRED")
     require(host_path().is_file() and receipt.get("hostSha256") == hashlib.sha256(host_path().read_bytes()).hexdigest(), "BUILD.HOST_CHANGED")
     if current_source:
         require(receipt.get("sourceTreeSha256") == source_fingerprint(), "BUILD.STALE_SOURCE")
@@ -302,12 +302,12 @@ def pack():
     require(module.is_file(), "BUILD.REQUIRED")
     files[manifest["runtime"]["entrypoint"]] = module.read_bytes()
     require(files[manifest["runtime"]["entrypoint"]].startswith(COMPONENT_HEADER), "MODULE.NOT_COMPONENT")
-    files["build-info.json"] = encoded({"schema":"tokenme.build/0.1","toolchain":decoded((ROOT/"toolchain.json").read_bytes()),"sourceTreeSha256":receipt["sourceTreeSha256"],"moduleSha256":receipt["moduleSha256"],"sdk":"tokenme-plugin-sdk-reference","sdkVersion":"0.1.0"})
-    files["checksums.json"] = encoded({"schema":"tokenme.package-integrity/0.1","files":{name:{"sha256":hashlib.sha256(data).hexdigest(),"size":len(data)} for name,data in sorted(files.items())}})
-    files["signature.json"] = encoded({"state":"unsigned-local","schema":"tokenme.package-signature/0.1"})
+    files["build-info.json"] = encoded({"schema":"kimo-token.build/0.1","toolchain":decoded((ROOT/"toolchain.json").read_bytes()),"sourceTreeSha256":receipt["sourceTreeSha256"],"moduleSha256":receipt["moduleSha256"],"sdk":"kimo-token-plugin-sdk-reference","sdkVersion":"0.1.0"})
+    files["checksums.json"] = encoded({"schema":"kimo-token.package-integrity/0.1","files":{name:{"sha256":hashlib.sha256(data).hexdigest(),"size":len(data)} for name,data in sorted(files.items())}})
+    files["signature.json"] = encoded({"state":"unsigned-local","schema":"kimo-token.package-signature/0.1"})
     data = archive_bytes(files)
     validate_package_bytes(data)
-    output = ROOT / "dist" / f'{manifest["id"]}_{manifest["version"]}.tokenme-plugin'
+    output = ROOT / "dist" / f'{manifest["id"]}_{manifest["version"]}.kimo-token-plugin'
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(data)
     output.with_suffix(output.suffix + ".sha256").write_text(hashlib.sha256(data).hexdigest()+"\n",encoding="ascii")
@@ -335,7 +335,7 @@ def validate_package_bytes(data):
         raise KitError("PACKAGE.INVALID_ZIP") from error
     require({"manifest.json","checksums.json","signature.json","build-info.json","LICENSE"} <= files.keys(), "PACKAGE.MISSING_FILE")
     integrity = decoded(files["checksums.json"])
-    require(isinstance(integrity,dict) and set(integrity) == {"schema","files"} and integrity.get("schema") == "tokenme.package-integrity/0.1" and isinstance(integrity.get("files"),dict), "PACKAGE.INTEGRITY_SCHEMA")
+    require(isinstance(integrity,dict) and set(integrity) == {"schema","files"} and integrity.get("schema") == "kimo-token.package-integrity/0.1" and isinstance(integrity.get("files"),dict), "PACKAGE.INTEGRITY_SCHEMA")
     require(set(integrity["files"]) == set(files)-{"checksums.json","signature.json"}, "PACKAGE.INTEGRITY_COVERAGE")
     for name, expected in integrity["files"].items():
         require(isinstance(expected,dict) and type(expected.get("size")) is int and expected == {"sha256":hashlib.sha256(files[name]).hexdigest(),"size":len(files[name])}, "PACKAGE.HASH_MISMATCH")
@@ -343,7 +343,7 @@ def validate_package_bytes(data):
     module = files.get(manifest["runtime"]["entrypoint"], b"")
     require(module.startswith(COMPONENT_HEADER), "MODULE.NOT_COMPONENT")
     signature = decoded(files["signature.json"])
-    require(signature == {"schema":"tokenme.package-signature/0.1","state":"unsigned-local"}, "SIGNATURE.UNSUPPORTED")
+    require(signature == {"schema":"kimo-token.package-signature/0.1","state":"unsigned-local"}, "SIGNATURE.UNSUPPORTED")
     allowed = {"manifest.json","checksums.json","signature.json","build-info.json","LICENSE",manifest["runtime"]["entrypoint"],manifest["tool"]["icon"],*manifest["locales"].values()}
     require(set(files) == allowed, "PACKAGE.UNEXPECTED_FILE")
     info = decoded(files["build-info.json"])
@@ -540,8 +540,8 @@ def verify_body(artifacts):
     build_info.update({"metadataOnlyVariant":True,"derivedFromPackageSha256":hashlib.sha256(original).hexdigest()})
     files["build-info.json"] = encoded(build_info)
     payload = {key:value for key,value in files.items() if key not in ("checksums.json","signature.json")}
-    files["checksums.json"] = encoded({"schema":"tokenme.package-integrity/0.1","files":{key:{"sha256":hashlib.sha256(value).hexdigest(),"size":len(value)} for key,value in sorted(payload.items())}})
-    variant_package = artifacts / "unseen-ide.tokenme-plugin"
+    files["checksums.json"] = encoded({"schema":"kimo-token.package-integrity/0.1","files":{key:{"sha256":hashlib.sha256(value).hexdigest(),"size":len(value)} for key,value in sorted(payload.items())}})
+    variant_package = artifacts / "unseen-ide.kimo-token-plugin"
     variant_package.write_bytes(archive_bytes(files))
     host_hash = hashlib.sha256(host_path().read_bytes()).hexdigest()
     install(variant_package, allow_unsigned=True)
@@ -560,7 +560,7 @@ def verify():
     run_id = uuid.uuid4().hex
     artifacts = ROOT / "artifacts/runs" / run_id
     artifacts.mkdir(parents=True)
-    report = {"schema":"tokenme.reference-verification/0.2","status":"running","runId":run_id,"artifactDirectory":artifacts.relative_to(ROOT).as_posix(),"mainAppIntegrated":False}
+    report = {"schema":"kimo-token.reference-verification/0.2","status":"running","runId":run_id,"artifactDirectory":artifacts.relative_to(ROOT).as_posix(),"mainAppIntegrated":False}
     latest = ROOT / "artifacts/verification.json"
     atomic_json(latest, report)
     atomic_json(artifacts / "verification.json", report)

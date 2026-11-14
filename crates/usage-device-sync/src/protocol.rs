@@ -862,7 +862,7 @@ impl PairingInvite {
     }
 
     pub fn url(&self) -> String {
-        format!("tokenme://device-pair?invite={}&endpoint={}&pin={}&secret={}&expires={}", self.invite_id, self.endpoint, self.certificate_pin, hex(&self.secret), self.expires_at_ms)
+        format!("kimo-token://device-pair?invite={}&endpoint={}&pin={}&secret={}&expires={}", self.invite_id, self.endpoint, self.certificate_pin, hex(&self.secret), self.expires_at_ms)
     }
 
     /// Adds only public connection material to the user-facing invite. The
@@ -901,9 +901,20 @@ impl PairingInvite {
         Ok(url)
     }
 
+    // 兼容旧邀请链接，但新生成的链接统一使用 kimo-token。
+    fn invite_query(value: &str) -> Option<&str> {
+        value.strip_prefix("kimo-token://device-pair?")
+            .or_else(|| value.strip_prefix("tokenme://device-pair?"))
+    }
+
+    // 在解析前快速检查新旧邀请链接的前缀。
+    pub fn has_url_prefix(value: &str) -> bool {
+        Self::invite_query(value).is_some()
+    }
+
     pub fn parse_url(value: &str) -> SyncResult<PairingInviteDetails> {
-        let query = value.strip_prefix("tokenme://device-pair?")
-            .ok_or_else(|| SyncError::Invalid("invite must use tokenme://device-pair".into()))?;
+        let query = Self::invite_query(value)
+            .ok_or_else(|| SyncError::Invalid("invite must use kimo-token://device-pair".into()))?;
         let mut fields = std::collections::BTreeMap::new();
         for part in query.split('&') {
             let (key, value) = part.split_once('=').ok_or_else(|| SyncError::Invalid("invite query is malformed".into()))?;
@@ -1335,8 +1346,18 @@ mod tests {
     #[test]
     fn pairing_invites_reject_plain_http_endpoints() {
         assert!(PairingInvite::new("http://192.168.1.20:47821", &"ab".repeat(32), i64::MAX).is_err());
-        let url = "tokenme://device-pair?invite=inv-1&endpoint=http://192.168.1.20:47821&pin=abababababababababababababababababababababababababababababababab&secret=abababababababababababababababababababababababababababababababab&expires=9223372036854775807";
+        let url = "kimo-token://device-pair?invite=inv-1&endpoint=http://192.168.1.20:47821&pin=abababababababababababababababababababababababababababababababab&secret=abababababababababababababababababababababababababababababababab&expires=9223372036854775807";
         assert!(PairingInvite::parse_url(url).is_err());
+    }
+
+    // 验证改名前生成的邀请仍能解析成同一份配对信息。
+    #[test]
+    fn pairing_invites_accept_legacy_links() {
+        let invite = PairingInvite::new("https://127.0.0.1:47821", &"ab".repeat(32), i64::MAX).unwrap();
+        let branded = invite.url();
+        assert!(branded.starts_with("kimo-token://"));
+        let legacy = branded.replacen("kimo-token://", "tokenme://", 1);
+        assert_eq!(PairingInvite::parse_url(&legacy).unwrap().invite, invite);
     }
 
     fn row(key: Option<&str>) -> NetworkRow {

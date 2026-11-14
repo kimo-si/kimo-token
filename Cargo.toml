@@ -29,13 +29,13 @@ members = [
     "crates/usage-quota",
     "crates/usage-cli",
 ]
-exclude = ["apps/tokenme-bar"]
+exclude = ["apps/kimo-token-bar"]
 
 [workspace.package]
 version = "0.2.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/Bencibr/tokenme.git"
+repository = "https://github.com/kimo-si/kimo-token.git"
 
 [workspace.dependencies]
 usage-core = { path = "crates/usage-core" }

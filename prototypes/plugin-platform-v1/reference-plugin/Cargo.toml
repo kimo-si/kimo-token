@@ -1,5 +1,5 @@
 [package]
-name = "tokenme-reference-plugin"
+name = "kimo-token-reference-plugin"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-tokenme-plugin-sdk-reference = { path = "../sdk" }
+kimo-token-plugin-sdk-reference = { path = "../sdk" }
 serde.workspace = true
 serde_json.workspace = true
 

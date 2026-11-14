@@ -202,7 +202,7 @@ pub fn open_image(image: &[u8]) -> Option<(rusqlite::Connection, std::path::Path
 pub fn open_image_checked(image: &[u8]) -> Result<(rusqlite::Connection, std::path::PathBuf), String> {
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let path = std::env::temp_dir().join(format!(
-        "tokenme-trae-{}-{}.db",
+        "kimo-token-trae-{}-{}.db",
         std::process::id(),
         SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));

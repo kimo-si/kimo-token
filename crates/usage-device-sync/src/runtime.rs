@@ -470,7 +470,7 @@ impl SyncRuntime {
     /// gate. Returns (rows carried, payload bytes) — (0, 0) when skipped as
     /// unchanged.
     fn push_local_rollup(&mut self, now_ms: i64) -> SyncResult<(u64, u64)> {
-        let fingerprint = self.local_rollup_fingerprint()?;
+        let fingerprint = self.store.local_rollup_fingerprint()?;
         if self.last_upload_fingerprint == Some(fingerprint) {
             return Ok((0, 0));
         }
@@ -511,24 +511,6 @@ impl SyncRuntime {
         }
     }
 
-    /// The uplink's change fingerprint: (n, sum(in_tok), max(max_ts)) over
-    /// this device's local-origin rollup rows. `event_rollup.origin` IS the
-    /// materialized `ORIGIN_SQL` of each event's source — the index folds it
-    /// in at ingest and the table carries no `source` column to re-evaluate
-    /// the expression against — so the local rows are exactly `origin = ''`,
-    /// the same predicate `SyncStore::local_rollup_snapshot` serves. A row
-    /// edit that keeps all three equal is invisible to the push; aggregate
-    /// rows are append-mostly, so that trade is the cheap idleness gate's
-    /// accepted cost.
-    fn local_rollup_fingerprint(&self) -> SyncResult<(i64, f64, i64)> {
-        self.store.index().conn()
-            .query_row(
-                "SELECT count(*), IFNULL(sum(in_tok), 0), IFNULL(MAX(max_ts), 0) FROM event_rollup WHERE origin = ''",
-                [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .map_err(|error| SyncError::Sqlite(error.to_string()))
-    }
-
     /// Sends the session's `DisplayNameUpdate` frame only when the known name
     /// is not the one the primary already acknowledged — once per name
     /// change, not once per pass like the HTTP call it replaced. The frame
@@ -541,7 +523,7 @@ impl SyncRuntime {
         if self.last_display_name_sent.as_deref() == Some(name.as_str()) { return; }
         match self.transport.ws_update_display_name(&name) {
             Ok(()) => self.last_display_name_sent = Some(name),
-            Err(error) => eprintln!("tokenme sync: display-name update failed: {error}"),
+            Err(error) => eprintln!("kimo-token sync: display-name update failed: {error}"),
         }
     }
 }
@@ -592,11 +574,12 @@ fn retryable_secondary_error(error: &SyncError) -> bool {
 }
 
 /// A primary (or secondary) on an incompatible schema version answers
-/// "update tokenme…" — no amount of resetting or re-snapshotting fixes that;
+/// "update kimo-token…" — no amount of resetting or re-snapshotting fixes that;
 /// only an upgrade does.
 fn is_version_incompatible_error(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
-    lower.contains("update tokenme") || lower.contains("unsupported") || lower.contains("schema is not supported")
+    lower.contains("update kimo-token") || lower.contains("update tokenme")
+        || lower.contains("unsupported") || lower.contains("schema is not supported")
 }
 
 fn is_unrecoverable_sync_error(message: &str) -> bool {

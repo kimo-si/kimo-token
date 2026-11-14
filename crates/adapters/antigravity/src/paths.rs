@@ -218,7 +218,7 @@ impl TempCopy {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let dir = std::env::temp_dir().join(format!("tokenme-antigravity-{}-{stamp}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kimo-token-antigravity-{}-{stamp}", std::process::id()));
         std::fs::create_dir_all(&dir).ok()?;
         let db_path = dir.join(name);
         std::fs::copy(source, &db_path).ok()?;

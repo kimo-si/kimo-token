@@ -59,7 +59,7 @@ pub struct Cache {
 impl Cache {
     /// `None` when the platform has no app-support dir; probes then run uncached.
     pub fn open(subdir: &str, ttl: Duration) -> Option<Self> {
-        let dir = dirs::config_dir()?.join(subdir);
+        let dir = usage_core::paths::config_dir()?.join(subdir);
         fs::create_dir_all(&dir).ok()?;
         Some(Self { dir, ttl })
     }
@@ -106,9 +106,7 @@ impl Cache {
         Some(views(tool, cached.captured_at_ms, &cached.entries))
     }
 
-    /// Drop every cached answer. The manual "refresh everything" path calls
-    /// this before collecting, so the next pass re-probes every vendor for
-    /// real instead of reading a still-fresh TTL entry.
+    /// Drop every cached answer for a caller that explicitly invalidates it.
     pub fn clear(&self) {
         if let Ok(entries) = fs::read_dir(&self.dir) {
             for entry in entries.flatten() {
@@ -166,8 +164,23 @@ fn views(tool: &str, captured_at_ms: i64, entries: &[Entry]) -> Vec<QuotaView> {
 /// would pay its full connect+read timeout on every single refresh, which in
 /// aggregate is what made `quota` take half a minute.
 pub fn probe(cache: Option<&Cache>, source: &dyn QuotaProbe) -> Vec<QuotaView> {
-    if let Some(cache) = cache {
-        if let Some(fresh) = cache.fresh(source.tool()) {
+    probe_with_mode(cache, source, ProbeMode::Cached)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProbeMode {
+    Cached,
+    Force,
+}
+
+// 定时或手动刷新可跳过有效期判断，但保留旧缓存供失败时使用。
+pub(crate) fn probe_with_mode(
+    cache: Option<&Cache>,
+    source: &dyn QuotaProbe,
+    mode: ProbeMode,
+) -> Vec<QuotaView> {
+    if mode == ProbeMode::Cached {
+        if let Some(fresh) = cache.and_then(|c| c.fresh(source.tool())) {
             crate::diagnostics::note(source.tool(), "probe_skipped", "cache_hit");
             return fresh;
         }
@@ -179,46 +192,49 @@ pub fn probe(cache: Option<&Cache>, source: &dyn QuotaProbe) -> Vec<QuotaView> {
     // processes. While one is in flight the caller gets whatever is cached.
     let Some(_flight) = Flight::claim(source.tool()) else {
         crate::diagnostics::note(source.tool(), "probe_skipped", "already_running");
-        return cache.and_then(|c| c.within(source.tool(), GRACE)).unwrap_or_default();
+        return mode.fallback(cache, source.tool()).unwrap_or_default();
     };
+    // 本轮查询未返回数据时按缓存策略保留先前答案。
     let samples = source.guarded_fetch();
     if samples.is_empty() {
-        // An outage flag says this empty means "the meters could not answer",
-        // not "nothing here": the last known windows ride however old they are
-        // (the UI speaks the samples' age), and no empty verdict is stored —
-        // the first successful poll replaces the held windows outright.
-        // Measured 2026-10-13: a zcode account's weekly pool hit 100% and the
-        // vendor went silent within one poll cycle; a plain empty answer would
-        // have banked a local 0% sample in the real answer's place.
-        if source.outage() {
-            if let Some(recent) = cache.and_then(|c| c.stale(source.tool())) {
-                if !recent.is_empty() {
-                    crate::log_meter(
-                        &format!("{}:outage", source.tool()),
-                        &format!("meters silent — holding the last known {} window(s)", recent.len()),
-                    );
-                    return recent;
-                }
-            }
-            return Vec::new();
-        }
-        // Keep a good answer for a grace period rather than blanking the bar
-        // because one request timed out; after that, remember the "nothing here"
-        // verdict so the next cycle costs nothing.
-        if let Some(cache) = cache {
-            if let Some(recent) = cache.within(source.tool(), GRACE) {
-                if !recent.is_empty() {
-                    return recent;
-                }
-            }
-            cache.store(source.tool(), &samples);
-        }
-        return Vec::new();
+        return empty_answer(cache, source, mode);
     }
     if let Some(cache) = cache {
         cache.store(source.tool(), &samples);
     }
     views(source.tool(), now_ms(), &entries_of(&samples))
+}
+
+// 区分服务端无响应与普通空结果，避免覆盖仍有用的配额快照。
+fn empty_answer(cache: Option<&Cache>, source: &dyn QuotaProbe, mode: ProbeMode) -> Vec<QuotaView> {
+    let Some(cache) = cache else { return Vec::new() };
+    let tool = source.tool();
+    if source.outage() {
+        let recent = cache.stale(tool).unwrap_or_default();
+        if !recent.is_empty() {
+            crate::log_meter(
+                &format!("{tool}:outage"),
+                &format!("meters silent — holding the last known {} window(s)", recent.len()),
+            );
+        }
+        return recent;
+    }
+    if let Some(recent) = mode.fallback(Some(cache), tool).filter(|rows| !rows.is_empty()) {
+        return recent;
+    }
+    cache.store(tool, &[]);
+    Vec::new()
+}
+
+impl ProbeMode {
+    // 强制查询无结果时保留上次答案；普通轮询继续遵守原有宽限期。
+    fn fallback(self, cache: Option<&Cache>, tool: &str) -> Option<Vec<QuotaView>> {
+        let cache = cache?;
+        match self {
+            Self::Cached => cache.within(tool, GRACE),
+            Self::Force => cache.stale(tool),
+        }
+    }
 }
 
 /// RAII registration of "this tool's probe is running right now".
@@ -280,7 +296,40 @@ pub fn cache_dir(path: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod cache_clear_tests {
-    use super::Cache;
+    use super::{probe, probe_with_mode, Cache, ProbeMode, QuotaProbe, QuotaSample};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct FailingProbe(AtomicUsize);
+
+    impl QuotaProbe for FailingProbe {
+        // 为手动刷新回归测试提供独立的缓存键。
+        fn tool(&self) -> &'static str { "manual-refresh-test" }
+
+        // 记录实际请求次数，并模拟厂商没有返回额度。
+        fn fetch(&self) -> Vec<QuotaSample> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Vec::new()
+        }
+    }
+
+    // 手动刷新要查厂商，即使缓存还新；失败后缓存的样本时间和值都要保留。
+    #[test]
+    fn manual_refresh_bypasses_fresh_cache_without_discarding_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::in_dir(dir.path().to_path_buf(), crate::TTL);
+        let vendor = FailingProbe(AtomicUsize::new(0));
+        cache.store(vendor.tool(), &[QuotaSample {
+            used_percent: 37.0, window_minutes: 300, resets_at_ms: 0, label: None, id: None,
+        }]);
+
+        let saved = probe(Some(&cache), &vendor);
+        assert_eq!(vendor.0.load(Ordering::Relaxed), 0);
+        assert_eq!(saved.len(), 1);
+        let after = probe_with_mode(Some(&cache), &vendor, ProbeMode::Force);
+        assert_eq!(vendor.0.load(Ordering::Relaxed), 1);
+        assert_eq!(after, saved);
+        assert_eq!(cache.fresh(vendor.tool()).unwrap(), saved);
+    }
 
     #[test]
     fn pre_split_answers_cannot_be_replayed_as_international() {

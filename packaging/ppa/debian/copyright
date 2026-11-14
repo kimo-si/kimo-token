@@ -1,9 +1,10 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: TokenMe
-Source: https://github.com/Bencibr/tokenme
+Upstream-Name: kimo-token
+Source: https://github.com/kimo-si/kimo-token
 
 Files: *
 Copyright: 2026 TokenMe contributors
+           2026 kimo-si and kimo-token contributors
 License: MIT
  See LICENSE in the upstream source archive.
 
@@ -14,8 +15,8 @@ License: multiple
  PREPARED-INPUTS.json lists the license expression supplied by each dependency.
  These dependencies are not covered by the upstream application's MIT license.
 
-Files: apps/tokenme-bar/dist/* vendor/frontend-licenses/*
-Copyright: TokenMe contributors and the respective frontend dependency authors
+Files: apps/kimo-token-bar/dist/* vendor/frontend-licenses/*
+Copyright: kimo-token contributors and the respective frontend dependency authors
 License: multiple
  The frontend is generated from the application's TypeScript and locked npm
  dependencies. Original dependency license notices are preserved under

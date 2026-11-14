@@ -16,7 +16,7 @@
 
 一次异常能够关联插件版本、可执行模块摘要、宿主版本、运行实例和失败阶段。开发者能够用同一错误码、诊断 ID 和匿名样本定位原因，不要求用户自行拼接多个日志文件。
 
-所有插件使用 TokenMe 提供的日志与诊断服务，不自行选择用户目录写文件、不各建一个不兼容的日志系统。诊断功能默认本地运行，不依赖云平台。
+所有插件使用 kimo-token 提供的日志与诊断服务，不自行选择用户目录写文件、不各建一个不兼容的日志系统。诊断功能默认本地运行，不依赖云平台。
 
 ## 2. 复用现有机制
 
@@ -25,8 +25,8 @@
 - `crates/usage-quota/src/diagnostics.rs`：已有带 run/probe/request 关联的类型化配额跟踪，仅记录元数据。
 - `crates/usage-core/src/adapter.rs`：已有 `read_note` / `drain_read_notes`，为读失败或无数据提供诊断线索。
 - `crates/usage-index/src/ingest.rs`：已有按来源的读取、摄取与游标控制；扩展为结构化批次计数和拒绝原因。
-- `apps/tokenme-bar/src-tauri/src/logging.rs`：已有文件轮换、脱敏和有界诊断读取。
-- `apps/tokenme-bar/src-tauri/src/diagnostics.rs`：已有授权诊断边界；插件诊断接入该边界，不自行开放不受控 HTTP/MCP 服务。
+- `apps/kimo-token-bar/src-tauri/src/logging.rs`：已有文件轮换、脱敏和有界诊断读取。
+- `apps/kimo-token-bar/src-tauri/src/diagnostics.rs`：已有授权诊断边界；插件诊断接入该边界，不自行开放不受控 HTTP/MCP 服务。
 
 现有 `panel.log`、`quota.log`、`scan.log` 和签到记录在迁移期保留。为旧事件附加关联标识或建立兼容映射；不要丢失原有证据，也不要把同一结果双写后当作两次任务。
 
@@ -89,7 +89,7 @@ ctx.log.info("quota.parsed", { windows: 2 })
 
 宿主自动加入插件、任务和 trace 上下文。事件码自动带插件命名空间；字段不符合 schema 时拒绝或丢弃该字段，并累计违规计数。以 enum、bool、有界数值、宿主产生的引用为主；标为“安全字符串”不能免除检查。
 
-核心错误码由宿主管理，例如 `NET.TIMEOUT`。插件错误在 `diagnostics.errors` 注册后使用插件命名空间，例如 `org.example.tokenme.example-ide/quota_response_invalid`；附带恢复建议码和可重试属性，禁止把远端响应正文塞进错误消息。
+核心错误码由宿主管理，例如 `NET.TIMEOUT`。插件错误在 `diagnostics.errors` 注册后使用插件命名空间，例如 `org.example.kimo-token.example-ide/quota_response_invalid`；附带恢复建议码和可重试属性，禁止把远端响应正文塞进错误消息。
 
 日志模板在插件语言目录中，JSON 事件码和错误码不随界面语言改变。插件卸载后，框架仍可显示原事件码、保留的最小模板快照及通用说明。
 
@@ -158,10 +158,10 @@ logs/plugins/
 下列命令名仅为拟议接口，不表示目前可执行：
 
 ```text
-tokenme plugin status <id>
-tokenme plugin logs <id> --task <task-id> --trace <trace-id>
-tokenme plugin doctor <id>
-tokenme plugin diagnose <id> --since 30m --output <local-path>
+kimo-token plugin status <id>
+kimo-token plugin logs <id> --task <task-id> --trace <trace-id>
+kimo-token plugin doctor <id>
+kimo-token plugin diagnose <id> --since 30m --output <local-path>
 ```
 
 `doctor` 默认只读本地已知状态与静态校验，不执行供应商请求、刷新凭据、签到或主动模型测速。手动运行任务使用单独的 action 命令与 UI，明确副作用并受正常授权和任务门控制。

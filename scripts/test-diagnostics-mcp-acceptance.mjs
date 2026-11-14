@@ -13,11 +13,11 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFileSync(join(root, path), "utf8");
-const tauriDiagnostics = read("apps/tokenme-bar/src-tauri/src/diagnostics.rs");
-const tauriLib = read("apps/tokenme-bar/src-tauri/src/lib.rs");
-const tauriCommands = read("apps/tokenme-bar/src-tauri/src/commands.rs");
+const tauriDiagnostics = read("apps/kimo-token-bar/src-tauri/src/diagnostics.rs");
+const tauriLib = read("apps/kimo-token-bar/src-tauri/src/lib.rs");
+const tauriCommands = read("apps/kimo-token-bar/src-tauri/src/commands.rs");
 const transport = read("crates/usage-device-sync/src/transport.rs");
-const syncSheet = read("apps/tokenme-bar/src/components/SyncSheet.tsx");
+const syncSheet = read("apps/kimo-token-bar/src/components/SyncSheet.tsx");
 const cliArgs = read("crates/usage-cli/src/args.rs");
 const cliMain = read("crates/usage-cli/src/main.rs");
 const cliCommands = read("crates/usage-cli/src/commands.rs");
@@ -74,7 +74,7 @@ function staticProbe() {
     assert.match(cliCommands, /alias = "serverName"/);
     assert.match(cliCommands, /MCP session is not initialized/);
     assert.match(cliCommands, /write_diagnostics_bridge_error/);
-    result("PASS", "TokenMe CLI stdio host source is present", "--db-scoped SyncStore and JSON-RPC-only stdio path");
+    result("PASS", "kimo-token CLI stdio host source is present", "--db-scoped SyncStore and JSON-RPC-only stdio path");
 
     assert.match(diagnosticsCore, /pub type DiagnosticsControlHandler/);
     assert.match(diagnosticsCore, /pub fn set_control_handler/);
@@ -100,7 +100,7 @@ function staticProbe() {
     assert.match(transport, /DiagnosticsService::new_with_host/);
     result("PASS", "Tauri diagnostics grant is attached to the running primary", "diagnostics_session → primary_diagnostics_context → HttpsSyncServerHandle → DiagnosticsService");
 
-    assert.match(syncSheet, /tokenme:\/\/device-pair\?/);
+    assert.match(syncSheet, /kimo-token:\/\/device-pair\?/);
     if (/runDiagnosticsPlaceholder/.test(syncSheet)) {
       result("FAIL", "diagnostics authorization QR/copy actions", "the UI still calls an undefined placeholder action");
     } else if (!/<img[^>]+diagnosticsQrDataUrl/.test(syncSheet)) {

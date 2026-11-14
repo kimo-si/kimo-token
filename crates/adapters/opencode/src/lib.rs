@@ -17,7 +17,7 @@
 //!   its own sandbox, so all sandboxes are read (see [`paths::Layout`]).
 //!
 //! None of these products documents an env override of its own, so the variables
-//! above are tokenme's, following `OPENCODE_DATA_DIR`.
+//! above are kimo-token's, following `OPENCODE_DATA_DIR`.
 //!
 //! Owned by the `codex-opencode-adapters` workstream; the `TOOL_ID` and
 //! `OpenCodeAdapter` surfaces are frozen.

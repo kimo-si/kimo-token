@@ -1,6 +1,6 @@
 // Run with node --experimental-strip-types scripts/test-pet-companion.mjs.
 import assert from "node:assert/strict";
-import { PetCompanion, DEFAULT_PET_PREFERENCES, greetingSlot, noticeMotion } from "../apps/tokenme-bar/src/lib/petCompanion.ts";
+import { PetCompanion, DEFAULT_PET_PREFERENCES, greetingSlot, noticeMotion } from "../apps/kimo-token-bar/src/lib/petCompanion.ts";
 
 const active = { idle_ms:0, locked:false, fullscreen:false, visible:true };
 const prefs = { ...DEFAULT_PET_PREFERENCES, greetings:false, rest_interval_minutes:15 };
